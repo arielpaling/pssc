@@ -675,6 +675,22 @@ component pss_top {""" + _ONE + """
   target function void run() { a.STS.write_val(add(inside + xor + unique0)); }
 }""", ["write 32 0x1004 0xa"]),
 
+    # --- Arrays of data in a component -------------------------------------------
+    # SV declared no member for an array field, so a body naming one did not
+    # compile. Elements start at 0 (LRM 8.1); 5 + 6 + (0 + 0 + 6 + 0).
+    "array fields of a component": Case("""
+component pss_top {""" + _ONE + """
+  array<bit[32], 4> keys;
+  bit[16] raw[3];
+  target function void run() {
+    bit[32] t = 0;
+    keys[1] = 5;
+    raw[2] = 6;
+    foreach (raw[i]) { t += raw[i]; }
+    a.STS.write_val(keys[1] + raw[2] + t);
+  }
+}""", ["write 32 0x1004 0x11"]),
+
     # --- A register value on the API -------------------------------------------
     # A layout is implementation until the API names it: here an operation
     # returns one, another takes one, and the root holds one. C kept every

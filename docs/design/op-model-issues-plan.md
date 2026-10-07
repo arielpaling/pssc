@@ -83,7 +83,9 @@ before the first iteration, so it is hoisted into a temporary when it is not a c
 `break`/`continue` already lowers. Matrix cases: a constant count, a count from
 a field, and an index used in the body.
 
-**W5. Array fields of a component in SV.** Declare them as
+**W5. Array fields of a component in SV.** DONE: `_data_fields` takes a
+fixed-size array of data, declared as an unpacked array member. Matrix case:
+"array fields of a component". Planned: declare them as
 SV unpacked arrays of the element type, initialized like scalars, and give
 `foreach` over one the same rendering Python and C use. Test: the existing
 matrix construct (`keys[1] = 5; raw[2] = 6;`), and a `foreach` over a field.
@@ -138,4 +140,4 @@ report:
 ## 5. Proposed commits
 
 One per item, each with its matrix cases: W1 (refusal) -> W2 -> W3 -> W8 ->
-W5 -> W4 -> W7 -> W6. Then C `super.initialize`.
+W5 -> W9 -> W4 -> W7 -> W6 -> W10. Then C `super.initialize`.

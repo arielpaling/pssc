@@ -1570,7 +1570,29 @@ def _data_fields(comp) -> List[object]:
         # that keeps its base for its `init_down` to use holds one.
         if _dt_name(f.datatype) in (_DT_INT, _DT_STRUCT, _DT_ENUM, _DT_CHANDLE):
             out.append(f)
+        elif (_dt_name(f.datatype) == "DataTypeArray"
+              and _dt_name(f.datatype.element_type) in (
+                  _DT_INT, _DT_STRUCT, _DT_ENUM, _DT_CHANDLE)):
+            # A fixed-size array of data: an unpacked array member. It used to
+            # be no member at all, so a body naming it did not compile.
+            out.append(f)
     return out
+
+
+def _data_decl(f, name: str) -> str:
+    """One data member's declaration; an array's bound goes after its name."""
+    dt = f.datatype
+    if _dt_name(dt) != "DataTypeArray":
+        return f"{sv_type(dt)} {name};"
+    try:
+        n = int(getattr(dt, "size", None))
+    except (TypeError, ValueError):
+        n = -1
+    if n < 0:
+        raise ValueError(
+            f"array member '{f.name}' has no folded size; SV needs a bound "
+            "and there is nothing to derive one from.")
+    return f"{sv_type(dt.element_type)} {name}[{n}];"
 
 
 def _ctor(comp, ctor_names=None):
@@ -1746,7 +1768,7 @@ def _member_decls(view, subs: Dict[str, SubComp]) -> List[str]:
             lines.append(f"    {_strip_pkg(sub.dtype.name)} {name}{dim};")
         elif id(f) in data:
             lines += comment_lines(getattr(f, "doc", None), "    ")
-            lines.append(f"    {sv_type(f.datatype)} {name};")
+            lines.append(f"    {_data_decl(f, name)}")
         elif id(f) in chans:
             lines.append(f"    {sv_type(f.datatype)} {name};")
     return lines
