@@ -3734,7 +3734,17 @@ class AstToIrTranslator:
             items[item_name] = next_val
             next_val += 1
 
-        enum_ir = ir.DataTypeEnum(name=enum_name, items=items)
+        # The declared base type (`enum e : bit[2]`, PSS 3.1) fixes the
+        # enumerators' representation -- and so the width of an enum-typed
+        # field of a packed struct (21.13.1). Without one, `width` stays 0
+        # ("infer"), which is never a packed field: the front end refuses that.
+        width = 0
+        base = enum_decl.getBase_type() if hasattr(enum_decl, "getBase_type") else None
+        if base is not None:
+            base_ir = self._translate_data_type(ctx, base)
+            width = int(getattr(base_ir, "bits", 0) or 0)
+
+        enum_ir = ir.DataTypeEnum(name=enum_name, items=items, width=width)
         ctx.add_type(enum_name, enum_ir)
         return enum_ir
 

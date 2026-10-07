@@ -17,6 +17,7 @@ directions.
 """
 from __future__ import annotations
 
+import json
 import re
 from typing import Dict, NamedTuple, Optional, Sequence
 
@@ -83,13 +84,9 @@ class Case(NamedTuple):
     xfail: Dict[str, str] = {}           # target -> defect it is waiting on
 
 
-_D1 = "D1: op-model-c keeps one base per component"
-_D1_UNBOUND = "D1/Q2: an unbound register group is not refused"
 _D2 = "D2: op-model-c cannot call into a sub-component"
 _D3 = "D3: a bit or part select is dropped, or has no lowering"
 _D4 = "D4: no lowering for an enum-item match pattern"
-_D5 = "D5: offsets fold only from a match"
-_D6 = "D6: an enum-typed field in a packed struct has no width"
 _D7 = "D7: no lowering for ?:"
 _D9 = "D9: evaluated at the host language's width, not PSS's"
 _D9_BOOL = "D9: op-model-cpp renders `bit` as bool, and `~` on a bool is an error"
@@ -113,7 +110,7 @@ component pss_top {
   }
   target function void run() { a.STS.write_val(1); b.CTL.write_val(2); }
 }""", ["write 32 0x1004 0x1", "write 32 0x2010 0x2"],
-        args=(0x1000, 0x2000), xfail=_on(["c"], _D1)),
+        args=(0x1000, 0x2000)),
 
     "a group at a handle made from another": Case("""
 component pss_top {
@@ -124,8 +121,7 @@ component pss_top {
     b.set_handle(make_handle_from_handle(base, 0x1000));
   }
   target function void run() { a.STS.write_val(1); b.CTL.write_val(2); }
-}""", ["write 32 0x1004 0x1", "write 32 0x2010 0x2"],
-        xfail=_on(["c"], _D1)),
+}""", ["write 32 0x1004 0x1", "write 32 0x2010 0x2"]),
 
     "three groups bound in reverse order": Case("""
 component pss_top {
@@ -142,7 +138,7 @@ component pss_top {
     a.CTL.write_val(1); b.CTL.write_val(2); c.CTL.write_val(3);
   }
 }""", ["write 32 0x1000 0x1", "write 32 0x2000 0x2", "write 32 0x3010 0x3"],
-        args=(0x1000, 0x2000, 0x3000), xfail=_on(["c"], _D1)),
+        args=(0x1000, 0x2000, 0x3000)),
 
     "a group no set_handle reaches": Case("""
 component pss_top {
@@ -150,8 +146,7 @@ component pss_top {
   gb_c b;
   solve function void initialize(addr_handle_t base) { a.set_handle(base); }
   target function void run() { a.STS.write_val(1); b.CTL.write_val(2); }
-}""", Refused([r"\bb\b", r"never bound"]),
-        xfail=_on(_ALL, _D1_UNBOUND)),
+}""", Refused([r"\bb\b", r"never bound"])),
 
     # --- D2: operations of a sub-component -------------------------------------
     "calling a sub-component's operation": Case("""
@@ -304,7 +299,7 @@ component pss_top {
   gi_c a;
   solve function void initialize(addr_handle_t base) { a.set_handle(base); }
   target function void run() { a.CTL.write_val(1); a.STS.write_val(2); }
-}""", ["write 32 0x1000 0x1", "write 32 0x1004 0x2"], xfail=_on(_ALL, _D5)),
+}""", ["write 32 0x1000 0x1", "write 32 0x1004 0x2"]),
 
     "offsets from an if chain, out of order and sparse": Case("""
 pure component gi_c : reg_group_c {
@@ -320,7 +315,7 @@ component pss_top {
   gi_c a;
   solve function void initialize(addr_handle_t base) { a.set_handle(base); }
   target function void run() { a.CTL.write_val(1); a.STS.write_val(2); }
-}""", ["write 32 0x1028 0x1", "write 32 0x1008 0x2"], xfail=_on(_ALL, _D5)),
+}""", ["write 32 0x1028 0x1", "write 32 0x1008 0x2"]),
 
     "an array-offset function that answers no for everything": Case("""
 pure component gi_c : reg_group_c {
@@ -337,7 +332,7 @@ component pss_top {
   gi_c a;
   solve function void initialize(addr_handle_t base) { a.set_handle(base); }
   target function void run() { a.CTL.write_val(1); }
-}""", ["write 32 0x1020 0x1"], xfail=_on(_ALL, _D5)),
+}""", ["write 32 0x1020 0x1"]),
 
     "an if chain with no case for a register": Case("""
 pure component gi_c : reg_group_c {
@@ -352,7 +347,7 @@ component pss_top {
   gi_c a;
   solve function void initialize(addr_handle_t base) { a.set_handle(base); }
   target function void run() { a.STS.write_val(2); }
-}""", Refused([r"gi_c", r"STS"]), xfail=_on(_ALL, _D5)),
+}""", Refused([r"gi_c", r"STS"])),
 
     "an offset function the build cannot evaluate": Case("""
 import target function bit[64] plat_offset();
@@ -367,7 +362,7 @@ component pss_top {
   gi_c a;
   solve function void initialize(addr_handle_t base) { a.set_handle(base); }
   target function void run() { a.CTL.write_val(1); }
-}""", Refused([r"gi_c", r"get_offset_of_instance"]), xfail=_on(_ALL, _D5)),
+}""", Refused([r"gi_c", r"get_offset_of_instance"])),
 
     # --- D6: enum-typed fields in a packed register struct ---------------------
     "an enum field in a packed register struct": Case("""
@@ -389,7 +384,7 @@ component pss_top {
     a.F.write(v);
   }
 }""", ["read 32 0x1000 0xfffffff9", "write 32 0x1000 0xfffffffd"],
-        mem={0x1000: 0xFFFFFFF9}, xfail=_on(_ALL, _D6)),
+        mem={0x1000: 0xFFFFFFF9}),
 
     # Refused by the front end (pssparser), with its location: pinned here so
     # no target starts defaulting a width.
@@ -509,3 +504,20 @@ def test_construct(tmp_path, name, target):
         return
     got = th.run(target, tmp_path, _REGS + case.pss, case.args, case.mem)
     assert got == case.want
+
+
+@pytest.mark.parametrize("target", _ALL)
+def test_an_enum_field_has_its_base_types_width_in_the_manifest(tmp_path,
+                                                                target):
+    """`enum e2_e : bit[2]` makes the field two bits wide (D6). The layout is
+    the manifest's statement, so a consumer packing the value by hand gets
+    the same bits the generated accessors do."""
+    man = tmp_path / "manifest.json"
+    th.compile_model(tmp_path, _REGS + CASES[
+        "an enum field in a packed register struct"].pss, target,
+        progseq_manifest=str(man))
+    doc = json.loads(man.read_text())
+    (fld,) = [s for s in doc["value_structs"] if s["name"] == "fld_s"]
+    assert fld["bits"] == 32
+    assert [(f["name"], f["lsb"], f["width"]) for f in fld["fields"]] == [
+        ("lo", 0, 1), ("mode", 1, 2), ("hi", 3, 29)]

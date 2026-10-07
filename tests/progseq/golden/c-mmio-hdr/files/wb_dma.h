@@ -221,7 +221,7 @@ PSSC_STATIC_ASSERT(offsetof(wb_dma_regs_t, bank) == 0x20u, wb_dma_regs_t_bank_of
  * run drives the core through the end-to-end wrappers.
  */
 typedef struct wb_dma_ch_s {
-    pssc_addr_t base;
+    pssc_addr_t base_regs;
     wb_dma_ch_regs_t *regs;
     /*
      * Which channel this is, in ``dma_req_i``/``dma_ack_o`` and INT_SRC bit
@@ -270,7 +270,7 @@ typedef struct wb_dma_ch_s {
  *   on the far interface; omitted by review decision.
  */
 typedef struct wb_dma_s {
-    pssc_addr_t base;
+    pssc_addr_t base_regs;
     wb_dma_regs_t *regs;
     /*
      * How many channels this instance actually uses.
@@ -845,8 +845,6 @@ static inline void wb_dma_ch_wait_hint(wb_dma_ch_t *s);
 /* ----- Component lifecycle + operations. ----- */
 /* --- wb_dma_ch_c --- */
 static inline void wb_dma_ch_init(wb_dma_ch_t *self, int id, pssc_addr_t bank) {
-    self->base = bank;
-    self->regs = (wb_dma_ch_regs_t *)(uintptr_t)self->base;
     pssc_chan1_init(&self->inflight);
     pssc_chan1_init(&self->wake);
     self->caps.present = 1;
@@ -854,7 +852,7 @@ static inline void wb_dma_ch_init(wb_dma_ch_t *self, int id, pssc_addr_t bank) {
     self->caps.ed = 1;
     self->caps.cbuf = 1;
     self->chan = id;
-    (self->base = bank);
+    (self->base_regs = bank, self->regs = (wb_dma_ch_regs_t *)(uintptr_t)self->base_regs);
 }
 
 /*
@@ -1473,11 +1471,9 @@ static inline void wb_dma_ch_wait_hint(wb_dma_ch_t *s) {
 
 /* --- wb_dma_c --- */
 static inline void wb_dma_init(wb_dma_t *self, pssc_addr_t base) {
-    self->base = base;
-    self->regs = (wb_dma_regs_t *)(uintptr_t)self->base;
     self->num_ch = 4;
     self->pri_levels = 4;
-    (self->base = base);
+    (self->base_regs = base, self->regs = (wb_dma_regs_t *)(uintptr_t)self->base_regs);
     for (unsigned i = 0; i < 4u; i++) {
         wb_dma_ch_init(&self->ch[i], i, (base + (0x20u + 0x20u * i)));
     }

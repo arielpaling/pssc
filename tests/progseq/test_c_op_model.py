@@ -130,7 +130,7 @@ def test_each_component_carries_its_own_bus(h):
     Reaching the root's copy instead would need the back-pointer above."""
     ch = h[h.index("typedef struct wb_dma_ch_s {"):h.index("} wb_dma_ch_t;")]
     assert "const pssc_mem_if *bus;" in ch
-    assert "pssc_addr_t base;" in ch
+    assert "pssc_addr_t base_regs;" in ch
 
 
 def test_component_data_members_are_present(h):
@@ -224,7 +224,7 @@ def test_prefix_map_is_the_escape_hatch(gen, tmp_path_factory):
 # --- C1.4: register accessors are per owning component ----------------------
 
 def test_channel_registers_are_reached_through_the_channel_handle(c):
-    """`wb_dma_ch_c.regs.csr` is at `ch->base + 0`, because the channel's base
+    """`wb_dma_ch_c.regs.csr` is at `ch->base_regs + 0`, because the channel's base
     IS its bank. That is what makes every per-channel operation body index-free
     -- `regs.csr.read()` with no channel number anywhere.
 
@@ -233,7 +233,7 @@ def test_channel_registers_are_reached_through_the_channel_handle(c):
     assert_c(c, has=[
         "PSSC_MAYBE_UNUSED static inline pssc_addr_t "
         "wb_dma_ch_regs_csr_addr(const wb_dma_ch_t *s) "
-        "{ return s->base + 0x0u; }",
+        "{ return s->base_regs + 0x0u; }",
         "wb_dma_ch_regs_csr_write(wb_dma_ch_t *s, wb_dma_csr_t v)",
     ])
 
@@ -246,7 +246,7 @@ def test_the_same_register_is_also_reachable_from_the_root(c):
     assert ("PSSC_MAYBE_UNUSED static inline pssc_addr_t "
             "wb_dma_regs_bank_csr_addr("
             "const wb_dma_t *s, int i0) "
-            "{ return s->base + 0x20u + (pssc_addr_t)i0 * 0x20u; }") in c
+            "{ return s->base_regs + 0x20u + (pssc_addr_t)i0 * 0x20u; }") in c
 
 
 def test_register_value_types_are_emitted_once(h, c):
@@ -285,12 +285,12 @@ def test_init_binds_the_base_and_constructs_every_channel(c):
 
 
 def test_channel_init_binds_its_own_bank(c):
-    """`regs.set_handle(bank)` on the channel -> the channel's own base. This is
+    """`regs.set_handle(bank)` on the channel -> its `regs` group's base. This is
     the per-instance half of the fold: the constant part is baked into the
     accessors, the instance part lands here."""
     body = c[c.index("void wb_dma_ch_init("):]
     body = body[:body.index("\n}")]
-    assert "self->base = bank;" in body
+    assert "self->base_regs = bank" in body
     assert "self->chan = id;" in body
 
 

@@ -514,7 +514,7 @@ class WbDmaCh(object):
 
     def __init__(self, imports: WbDmaImportApi, id, bank):
         self._imports = imports
-        self._pss_base_regs = bank
+        self._pss_base_regs = 0
         self.inflight = Chan1(imports.event)
         self.wake = Chan1(imports.event)
         self.chan = 0
@@ -1232,7 +1232,7 @@ class WbDma(object):
 
     def __init__(self, imports: WbDmaImportApi, base):
         self._imports = imports
-        self._pss_base_regs = base
+        self._pss_base_regs = 0
         self.num_ch = 4
         self.pri_levels = 4
         self.ch = [None] * 4

@@ -26,6 +26,7 @@ from __future__ import annotations
 import dataclasses as dc
 from typing import Any, List, Optional, Tuple
 
+from ..reg_field_resolve import field_width
 from .progseq_model import (_dt_name, array_element_type, array_base_stride,
                             field_is_array, field_is_reg_group,
                             field_is_register, scalar_offset)
@@ -73,7 +74,7 @@ def value_bits(reg_dtype) -> int:
         return int(sb)
     vs = value_struct(reg_dtype)
     if vs is not None:
-        return sum(int(f.datatype.bits) for f in vs.fields)
+        return sum(field_width(f) for f in vs.fields)
     vt = getattr(reg_dtype, "register_value_type", None)
     return int(getattr(vt, "bits", 32) or 32)
 

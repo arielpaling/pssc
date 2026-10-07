@@ -630,9 +630,16 @@ class OpModelTarget(Target):
         # `func_kind(fn)` on one function -- for which the ambient value is
         # still the fallback. Nothing in a generated file depends on it.
         with pm.ctor_names_scope(getattr(opts, "progseq_ctor_name", None)):
-            model = self.build_model(ctx, opts)
-            self.check(model)
-            outputs = list(self.emit(model, opts))
+            try:
+                model = self.build_model(ctx, opts)
+                self.check(model)
+                outputs = list(self.emit(model, opts))
+            except pm.OffsetFoldError as e:
+                # The model's offset function, not the backend: a user error.
+                # `check_register_offsets` catches it before any file is
+                # written; this catches an offset a body asks for itself.
+                from ..driver import CompileError
+                raise CompileError(str(e)) from None
             return outputs + self.emit_manifest(model, opts, outputs)
 
     def emit_manifest(self, model: OpModel, opts: argparse.Namespace,
@@ -723,7 +730,7 @@ class OpModelTarget(Target):
     def check(self, model: OpModel) -> None:
         """Everything that must hold before any file is opened.
 
-        Two checks, and both were learned the same way -- from a build that
+        The checks were all learned the same way -- from a build that
         exited 0 and produced something useless:
 
         * **Call legality.** A call the backend cannot lower is a compile error
@@ -744,7 +751,42 @@ class OpModelTarget(Target):
              extra_components=model.base_classes,
              native=self.native_inheritance)
         self.check_executors(model)
+        self.check_group_bindings(model)
+        self.check_register_offsets(model)
         self.assert_api_is_not_empty(model)
+
+    def check_register_offsets(self, model: OpModel) -> None:
+        """Evaluate every register's offset (`reg_layout.collect_accessors`)
+        before any file is opened. An offset function the build cannot run,
+        or one that answers the -1 sentinel for a declared register, is the
+        model's error and is reported as one, one line per component."""
+        from ..driver import CompileError
+        from .reg_layout import collect_accessors
+
+        bad = []
+        for comp in {id(d): d for d in model.comp_dtypes}.values():
+            try:
+                collect_accessors(comp)
+            except pm.OffsetFoldError as e:
+                name = (getattr(comp, "name", "") or "?").split("::")[-1]
+                bad.append(f"{name}: {e}")
+        if bad:
+            raise CompileError(
+                f"{len(bad)} register offset(s) cannot be evaluated", bad)
+
+    def check_group_bindings(self, model: OpModel) -> None:
+        """Refuse a register group that no `set_handle` reaches
+        (`group_binding.check`): it has no address, and every backend used to
+        give it someone else's."""
+        from ..driver import CompileError
+        from . import group_binding
+
+        tm = getattr(model.ctx, "type_map", {}) or {}
+        comps = list({id(d): d for d in model.comp_dtypes}.values())
+        bad = group_binding.check(comps, model.ctor_names, tm)
+        if bad:
+            raise CompileError(
+                f"{len(bad)} register group(s) are never bound", bad)
 
     def check_executors(self, model: OpModel) -> None:
         """Refuse an executor this backend would lower wrongly

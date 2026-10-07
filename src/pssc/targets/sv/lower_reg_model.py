@@ -26,7 +26,7 @@ from ..progseq_model import (
     _eval_off, _pattern_str, _array_base_stride, _scalar_offset,
     _is_reserved, collect_reg_groups, collect_value_structs,
 )
-from ...reg_field_resolve import struct_layout
+from ...reg_field_resolve import field_width, struct_layout
 from .reg_field_names import const_name
 
 _DT_REGISTER = "DataTypeRegister"
@@ -76,7 +76,7 @@ def emit_value_struct(struct_dtype) -> str:
     lines = ["  typedef struct packed {"]
     for f in reversed(struct_dtype.fields):   # LSB-first -> MSB-first
         lines += comment_lines(getattr(f, "doc", None), "    ")
-        decl = f"    {_sv_bit_type(int(f.datatype.bits))} {f.name};"
+        decl = f"    {_sv_bit_type(field_width(f))} {f.name};"
         lines += append_trailing([decl], getattr(f, "doc_trailing", None))
     lines.append(f"  }} {name};")
     return "\n".join(lines)

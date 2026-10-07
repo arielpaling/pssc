@@ -452,11 +452,11 @@ def _offset_fn(group_dtype, fname: str):
 
 def array_base_stride(group_dtype, field_name: str) -> Tuple[int, int]:
     """``(base, stride)`` for an instance array, from the group's own
-    ``get_offset_of_instance_array``.
+    ``get_offset_of_instance_array``, evaluated (:class:`_OffsetEval`).
 
-    Raises :class:`OffsetFoldError` naming the group and the instance when no
-    arm matches -- the case a renamed RDL instance produces, which the PSS
-    function itself answers with the -1 sentinel.
+    Raises :class:`OffsetFoldError` naming the group and the instance when the
+    function answers the -1 sentinel for it -- the case a renamed RDL instance
+    produces.
     """
     gname = _strip_pkg_name(group_dtype)
     fn = _offset_fn(group_dtype, "get_offset_of_instance_array")
@@ -464,23 +464,18 @@ def array_base_stride(group_dtype, field_name: str) -> Tuple[int, int]:
         raise OffsetFoldError(
             f"register group '{gname}' declares no "
             f"get_offset_of_instance_array")
-    if not fn.body or _dt_name(fn.body[0]) != "StmtMatch":
+    off = _OffsetEval(fn, gname, field_name).result()
+    if off is None:
         raise OffsetFoldError(
-            f"'{gname}.get_offset_of_instance_array' is not a match over the "
-            f"instance name, so its offsets cannot be evaluated at build time")
-    idx = _index_names(fn)
-    for case in fn.body[0].cases:
-        if _pattern_str(case.pattern) == field_name:
-            return _affine(case.body[0].value, idx)
-    raise OffsetFoldError(
-        f"register group '{gname}' declares no instance array named "
-        f"'{field_name}' (its get_offset_of_instance_array would return the "
-        f"-1 error sentinel)")
+            f"register group '{gname}' declares no instance array named "
+            f"'{field_name}' (its get_offset_of_instance_array would return "
+            f"the -1 error sentinel)")
+    return off
 
 
 def scalar_offset(group_dtype, name: str) -> int:
     """Byte offset of a scalar instance within ``group_dtype``, from the group's
-    own ``get_offset_of_instance``.
+    own ``get_offset_of_instance``, evaluated (:class:`_OffsetEval`).
 
     The offsets are the user's (LRM 21.14.1: "users shall provide the
     implementation"). The front end's ``offset_map`` packs registers 4 bytes
@@ -492,18 +487,18 @@ def scalar_offset(group_dtype, name: str) -> int:
     gname = _strip_pkg_name(group_dtype)
     fn = _offset_fn(group_dtype, "get_offset_of_instance")
     if fn is not None and fn.body:
-        if _dt_name(fn.body[0]) != "StmtMatch":
+        off = _OffsetEval(fn, gname, name).result()
+        if off is None:
             raise OffsetFoldError(
-                f"'{gname}.get_offset_of_instance' is not a match over the "
-                f"instance name, so its offsets cannot be evaluated at build "
-                f"time")
-        for case in fn.body[0].cases:
-            if _pattern_str(case.pattern) == name:
-                off, _ = _affine(case.body[0].value, ())
-                return off
-        raise OffsetFoldError(
-            f"register group '{gname}' declares no instance named '{name}' "
-            f"(its get_offset_of_instance would return the -1 error sentinel)")
+                f"register group '{gname}' declares no instance named "
+                f"'{name}' (its get_offset_of_instance would return the -1 "
+                f"error sentinel)")
+        c0, c1 = off
+        if c1:
+            raise OffsetFoldError(
+                f"'{gname}.get_offset_of_instance' gives '{name}' an offset "
+                f"that depends on an array index, but it takes none")
+        return c0
     omap = getattr(group_dtype, "offset_map", None) or {}
     if name not in omap:
         raise OffsetFoldError(
@@ -511,6 +506,140 @@ def scalar_offset(group_dtype, name: str) -> int:
             f"instance named '{name}' (its get_offset_of_instance would "
             f"return the -1 error sentinel)")
     return int(omap[name])
+
+
+_MASK64 = (1 << 64) - 1
+_FELL_OFF = object()
+
+
+class _OffsetEval:
+    """Runs an offset function for ONE instance name, at build time.
+
+    The function is the user's (21.14.1), and models write it more than one
+    way: a `match` over the name, or an `if`/`else if` chain comparing it with
+    string literals, ending in the -1 sentinel. Reading only the first form
+    refused every register package written the second way, so the body is
+    RUN rather than pattern-matched: `if`, `match` (values, alternatives,
+    `default`), `return`, and `==`/`!=`/`&&`/`||`/`!` over the name and
+    constants. A returned value is affine in the index (`_affine`).
+
+    Anything else -- a call, a loop, a local, a field -- is refused naming the
+    function. There is no fallback: the dense `offset_map` is a wrong address
+    for any group whose function says otherwise.
+    """
+
+    def __init__(self, fn, gname: str, instance: str):
+        args = getattr(getattr(fn, "args", None), "args", None) or []
+        self.fn = fn
+        self.name_param = args[0].arg if args else "name"
+        self.index_names = _index_names(fn)
+        self.instance = instance
+        self.where = f"'{gname}.{fn.name}'"
+
+    def result(self) -> Optional[Tuple[int, int]]:
+        """``(base, stride)``, or ``None`` when the function has no offset
+        for the name: it returns the -1 sentinel, or no case answers it."""
+        body = getattr(self.fn, "body", None) or []
+        if not body:
+            raise OffsetFoldError(
+                f"{self.where} returns no offset for '{self.instance}', so "
+                f"its offsets cannot be evaluated at build time")
+        r = self._run(body)
+        if r is _FELL_OFF:
+            return None
+        c0, c1 = r
+        if c1 == 0 and (c0 & _MASK64) == _MASK64:
+            return None
+        return c0, c1
+
+    def _refuse(self, what: str):
+        raise OffsetFoldError(
+            f"{self.where} uses {what}, which cannot be evaluated at build "
+            f"time; an offset function may use if, match and return over "
+            f"the instance name and constants")
+
+    def _run(self, stmts):
+        for st in stmts:
+            r = self._stmt(st)
+            if r is not _FELL_OFF:
+                return r
+        return _FELL_OFF
+
+    def _stmt(self, st):
+        cn = _dt_name(st)
+        if cn == "StmtReturn":
+            if st.value is None:
+                self._refuse("a return with no value")
+            return self._affine(st.value)
+        if cn == "StmtIf":
+            return self._run(st.body if self._truth(st.test) else st.orelse)
+        if cn == "StmtMatch":
+            subj = self._value(st.subject)
+            for case in st.cases:
+                if getattr(case, "guard", None) is not None:
+                    self._refuse("a guarded match case")
+                if self._matches(case.pattern, subj):
+                    return self._run(case.body)
+            return _FELL_OFF
+        if cn == "StmtPass":
+            return _FELL_OFF
+        self._refuse(f"a statement of kind {cn}")
+
+    def _matches(self, pat, subj) -> bool:
+        cn = _dt_name(pat)
+        if cn == "PatternValue":
+            return self._value(pat.value) == subj
+        if cn == "PatternOr":
+            return any(self._matches(p, subj) for p in pat.patterns)
+        if cn == "PatternAs" and getattr(pat, "pattern", None) is None:
+            return True                  # `default:`
+        self._refuse(f"a match pattern of kind {cn}")
+
+    def _is_name(self, e) -> bool:
+        cn = _dt_name(e)
+        if cn == "ExprAttribute" and _dt_name(e.value) == "TypeExprRefSelf":
+            return e.attr == self.name_param
+        return cn == "ExprRefLocal" and e.name == self.name_param
+
+    def _value(self, e):
+        """A ``str``, a ``bool``, or an affine ``(c0, c1)``."""
+        if self._is_name(e):
+            return self.instance
+        cn = _dt_name(e)
+        if cn == "ExprConstant" and isinstance(e.value, (str, bool)):
+            return e.value
+        if cn == "ExprBin" and e.op.name in ("Eq", "NotEq"):
+            eq = self._const(e.lhs) == self._const(e.rhs)
+            return eq if e.op.name == "Eq" else not eq
+        if cn == "ExprBin" and e.op.name in ("And", "Or"):
+            lv = self._truth(e.lhs)
+            if e.op.name == "And":
+                return lv and self._truth(e.rhs)
+            return lv or self._truth(e.rhs)
+        if cn == "ExprUnary" and e.op.name == "Not":
+            return not self._truth(e.operand)
+        return self._affine(e)
+
+    def _const(self, e):
+        """A value that does not depend on the index (a condition must not)."""
+        v = self._value(e)
+        if isinstance(v, tuple):
+            if v[1]:
+                self._refuse("a condition on the array index")
+            return v[0]
+        return v
+
+    def _truth(self, e) -> bool:
+        v = self._const(e)
+        if isinstance(v, str):
+            self._refuse("a string as a condition")
+        return bool(v)
+
+    def _affine(self, e) -> Tuple[int, int]:
+        try:
+            return _affine(e, self.index_names)
+        except OffsetFoldError as ex:
+            raise OffsetFoldError(f"{self.where}: {ex}") from None
 
 
 def _strip_pkg_name(dtype) -> str:

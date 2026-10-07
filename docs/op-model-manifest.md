@@ -169,7 +169,7 @@ name the model no longer carries.
 | Field | Meaning |
 | --- | --- |
 | `path` | the register-group path from the component to the register |
-| `offset` | the **folded** constant byte offset from the component's base |
+| `offset` | the **folded** constant byte offset from the handle bound to the group `path[0]` |
 | `strides` | one byte stride per array dimension in `path`, outermost first |
 | `bits` | the register's declared width |
 | `access_width` | the bus transaction width it is accessed at (8/16/32/64) |
@@ -178,9 +178,12 @@ name the model no longer carries.
 
 The address of one register instance is
 
-    base + offset + sum(index[i] * strides[i])
+    handle(path[0]) + offset + sum(index[i] * strides[i])
 
-which is exactly what the generated accessors compute, from the same walk.
+where `handle(path[0])` is the address the component's `path[0].set_handle(...)`
+bound. Each register group has its own: two groups of one component can sit at
+unrelated addresses. This is exactly what the generated accessors compute, from
+the same walk.
 `strides` is empty for a register that is not inside an array.
 
 **Reserved registers are absent.** A field whose name begins with `_` holds

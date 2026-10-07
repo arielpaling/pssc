@@ -10,7 +10,20 @@ The repros are not checked in, and are not copied into the tests. Each test
 below is written fresh, from the PSS constructs involved, with no naming taken
 from the model that found it.
 
-## 1. Where each defect stands today
+## 0. Progress
+
+| Fix | State |
+|---|---|
+| Tests: `trace_harness.py`, `test_op_model_construct_matrix.py` | done (`32a2a52`) |
+| F1 (D1), with Q2: one base per group in C; unbound group refused (`group_binding.py`) | done |
+| F5 (D5): offset functions evaluated (`progseq_model._OffsetEval`); bad ones are a `CompileError` | done |
+| F6 (D6): enum base type carried by ast2ir; one width rule (`reg_field_resolve.field_width`) | done |
+| F9 (D9), F2 (D2), F3 (D3), F4 (D4), F7 (D7) | open |
+
+T1d (a mutation check of the C base) is covered by history: the T1 cases were
+strict xfails on C before F1 and pass after it.
+
+## 1. Where each defect stood on 2026-10-07
 
 `ok` = output checked by hand and correct. `rc=0 WRONG` = pssc exits 0 and the
 output is wrong (the worst kind). `error` = pssc stops with an internal error

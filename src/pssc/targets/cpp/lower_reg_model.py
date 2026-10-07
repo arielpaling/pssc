@@ -18,6 +18,7 @@ from ..progseq_model import (
     array_size, _dt_name, _scalar_offset, _array_base_stride, _is_reserved,
     collect_reg_groups, collect_value_structs,
 )
+from ...reg_field_resolve import field_width
 from ..c.lower_reg_model import (
     c_struct_name, _prim_bits, _struct_total_bits, _reg_value_bits, _strip_pkg,
 )
@@ -39,7 +40,7 @@ def emit_value_union(struct_dtype) -> str:
     lines = [f"typedef union {{ {ut} raw; struct {{"]
     bit = 0
     for f in struct_dtype.fields:
-        w = int(f.datatype.bits)
+        w = field_width(f)
         lines.append(f"    {ut} {f.name:12} : {w:2};   /* [{bit + w - 1}:{bit}] */")
         bit += w
     lines.append(f"}}; }} {name};")

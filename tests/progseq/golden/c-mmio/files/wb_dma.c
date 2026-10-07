@@ -62,8 +62,6 @@ typedef union { uint32_t raw; struct {
 /* ----- Component lifecycle + operations. ----- */
 /* --- wb_dma_ch_c --- */
 void wb_dma_ch_init(wb_dma_ch_t *self, int id, pssc_addr_t bank) {
-    self->base = bank;
-    self->regs = (wb_dma_ch_regs_t *)(uintptr_t)self->base;
     pssc_chan1_init(&self->inflight);
     pssc_chan1_init(&self->wake);
     self->caps.present = 1;
@@ -71,7 +69,7 @@ void wb_dma_ch_init(wb_dma_ch_t *self, int id, pssc_addr_t bank) {
     self->caps.ed = 1;
     self->caps.cbuf = 1;
     self->chan = id;
-    (self->base = bank);
+    (self->base_regs = bank, self->regs = (wb_dma_ch_regs_t *)(uintptr_t)self->base_regs);
 }
 
 /*
@@ -690,11 +688,9 @@ void wb_dma_ch_wait_hint(wb_dma_ch_t *s) {
 
 /* --- wb_dma_c --- */
 void wb_dma_init(wb_dma_t *self, pssc_addr_t base) {
-    self->base = base;
-    self->regs = (wb_dma_regs_t *)(uintptr_t)self->base;
     self->num_ch = 4;
     self->pri_levels = 4;
-    (self->base = base);
+    (self->base_regs = base, self->regs = (wb_dma_regs_t *)(uintptr_t)self->base_regs);
     for (unsigned i = 0; i < 4u; i++) {
         wb_dma_ch_init(&self->ch[i], i, (base + (0x20u + 0x20u * i)));
     }

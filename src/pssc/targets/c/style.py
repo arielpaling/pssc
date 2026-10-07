@@ -128,6 +128,17 @@ class CStylePolicy(StylePolicy):
         """
         return "_".join([comp_prefix] + list(path) + [reg])
 
+    def group_base(self, group: str) -> str:
+        """The handle member holding one register group's base address:
+        ``regs`` -> ``base_regs``.
+
+        One per group, because each group is bound by its own `set_handle`
+        (LRM 21.14.1): a component whose groups sit at different handles
+        cannot share one base, and when it did, the last `set_handle` moved
+        every group to its address.
+        """
+        return f"base_{group}"
+
     def macro(self, comp_prefix: str, name: str) -> str:
         """An emitted macro: ``wb_dma`` + ``CH_COUNT`` -> ``WB_DMA_CH_COUNT``."""
         return f"{comp_prefix}_{name}".upper()

@@ -23,7 +23,7 @@ from ..progseq_model import (
 )
 from ..reg_layout import (collect_accessors, prim_bits as _prim_bits,
                           value_bits as _reg_value_bits, value_struct)
-from ...reg_field_resolve import struct_layout
+from ...reg_field_resolve import field_width, struct_layout
 from ..comments import BLOCK, append_trailing, comment_lines
 from .mem_access import DEFAULT as DEFAULT_MEM, MemAccess
 from .style import coerce as _style
@@ -62,7 +62,7 @@ def c_struct_name(struct_dtype) -> str:
 
 
 def _struct_total_bits(struct_dtype) -> int:
-    return sum(int(f.datatype.bits) for f in struct_dtype.fields)
+    return sum(field_width(f) for f in struct_dtype.fields)
 
 
 def _reg_is_struct(reg_dtype) -> bool:
@@ -186,6 +186,8 @@ class _Acc:
     access: str          # READWRITE / READONLY / WRITEONLY
     const_off: int
     strides: List[int]   # one per array index parameter
+    #: The handle member holding the base of the group the register is in.
+    base_member: str = "base"
 
 
 def _collect_accessors(root_dtype, prefix: str, style=None) -> List[_Acc]:
@@ -205,6 +207,7 @@ def _collect_accessors(root_dtype, prefix: str, style=None) -> List[_Acc]:
             access=a.access,
             const_off=a.const_off,
             strides=list(a.strides),
+            base_member=_style(style).group_base(a.segs[0]),
         )
         for a in collect_accessors(root_dtype)
     ]
@@ -222,7 +225,7 @@ def _idx_args(n: int) -> str:
 
 
 def _addr_expr(acc: _Acc) -> str:
-    terms = [f"s->base + 0x{acc.const_off:x}u"]
+    terms = [f"s->{acc.base_member} + 0x{acc.const_off:x}u"]
     for k, stride in enumerate(acc.strides):
         terms.append(f"(pssc_addr_t)i{k} * 0x{stride:x}u")
     return " + ".join(terms)

@@ -32,6 +32,7 @@ from ..progseq_model import (INIT_EXEC_KINDS, FuncKind, _dt_name,
                              sub_components)
 from .. import comp_inherit as ci
 from .. import executors as xtr
+from .. import group_binding
 from .. import pkg_functions as pf
 from . import lower_api_types as api
 from . import lower_import_api as impapi
@@ -653,7 +654,7 @@ class PyOpModelBackend(object):
             if xtr.has_executors(model):
                 own = "self" if xtr.is_executor(comp, tm) else "None"
                 lines.append(f"        self.{EXECUTOR_ATTR} = {own}")
-        lines += self._bind_groups(view, None)
+        lines += self._bind_groups(view)
         for f in channel_fields(view):
             self._check_channel(f)
             arg = (f"self.{IMPORTS_ATTR}.event"
@@ -679,20 +680,20 @@ class PyOpModelBackend(object):
                 + "):"]
             # Every group it has, inherited ones included: a constructor that
             # shadows its base's does not run it (C++ binds the same way).
-            body: List[str] = self._bind_groups(comp,
-                                                self._addr_arg(own_ctor))
+            body: List[str] = self._bind_groups(comp, own_ctor, model,
+                                                others=False)
             be = self._emitter(self.ctor_emitter_cls, own_ctor, comp, model)
             body += be.stmts(own_ctor.body, 2)
             lines += body or ["        pass"]
         elif base is not None and ctor is not None and \
-                self._bind_groups(view, None):
+                self._bind_groups(view):
             # The constructor is the base's; this class binds its own groups
             # after it.
             params = [mangle(a.arg) for a in ctor.args.args]
             lines += ["", "    def " + CTOR_METHOD + "(" + ", ".join(
                 ["self"] + params) + "):",
                 f"        super().{CTOR_METHOD}({', '.join(params)})"]
-            lines += self._bind_groups(view, self._addr_arg(ctor))
+            lines += self._bind_groups(view, ctor, model, others=False)
 
         # -- init blocks: one method per kind this class declares -----------
         for kind in INIT_EXEC_KINDS:
@@ -810,10 +811,10 @@ class PyOpModelBackend(object):
             # the tree afterwards (`emit_bind`). An executor is its own.
             own = "self" if xtr.is_executor(comp, self._tm(model)) else "None"
             lines.append(f"        self.{EXECUTOR_ATTR} = {own}")
-        # Each register group bound to the constructor's address, which the
-        # body may rebind. Nothing to bind to leaves it at 0: every accessor
-        # then offsets from 0, visibly wrong in a trace rather than quietly.
-        lines += self._bind_groups(comp, self._addr_arg(ctor))
+        # Each register group at 0 until its `set_handle` runs, except the one
+        # the implicit binding gives the constructor's address
+        # (`group_binding`).
+        lines += self._bind_groups(comp, ctor, model)
         for f in channel_fields(comp):
             self._check_channel(f)
             # The async channel is built on the PLATFORM's event, not on one
@@ -1015,12 +1016,32 @@ class PyOpModelBackend(object):
         return None
 
     @staticmethod
-    def _bind_groups(comp, addr) -> List[str]:
-        """`self._pss_base_<g> = <addr>` for each register group of *comp*."""
-        return [f"        self.{group_base(f.name)} = "
-                f"{addr if addr is not None else 0}"
-                for f in getattr(comp, "fields", None) or []
-                if field_is_reg_group(f)]
+    def _bind_groups(comp, ctor=None, model=None,
+                     others: bool = True) -> List[str]:
+        """`self._pss_base_<g> = ...` for the register groups of *comp*.
+
+        With *ctor*, the group `group_binding` binds implicitly (a component's
+        only group, when its constructor binds none) takes the constructor's
+        address parameter. Every other group is 0 until its `set_handle` runs,
+        or skipped when *others* is false. A group nothing binds never gets
+        here: `OpModelTarget.check` refused it.
+        """
+        implicit = None
+        if ctor is not None:
+            implicit = group_binding.bindings(
+                [comp], model.ctor_names)[id(comp)].implicit
+        out = []
+        for f in getattr(comp, "fields", None) or []:
+            if not field_is_reg_group(f):
+                continue
+            if implicit is not None and implicit[0] == f.name:
+                val = mangle(implicit[1])
+            elif others:
+                val = "0"
+            else:
+                continue
+            out.append(f"        self.{group_base(f.name)} = {val}")
+        return out
 
     @staticmethod
     def _data_members(comp) -> List[Any]:

@@ -434,7 +434,7 @@ def test_policy_cannot_alter_address(registered_style):
     registered_style(_Acme())
 
     def addrs(text):
-        return re.findall(r"s->base \+ 0x[0-9a-f]+u(?: \+ [^;)]+)?", text)
+        return re.findall(r"s->base_\w+ \+ 0x[0-9a-f]+u(?: \+ [^;)]+)?", text)
 
     default = addrs(_c_output())
     acme = addrs(_c_output(c_style="acme", c_link_style="direct"))

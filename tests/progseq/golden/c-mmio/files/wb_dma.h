@@ -163,7 +163,7 @@ PSSC_STATIC_ASSERT(offsetof(wb_dma_regs_t, bank) == 0x20u, wb_dma_regs_t_bank_of
  * run drives the core through the end-to-end wrappers.
  */
 typedef struct wb_dma_ch_s {
-    pssc_addr_t base;
+    pssc_addr_t base_regs;
     wb_dma_ch_regs_t *regs;
     /*
      * Which channel this is, in ``dma_req_i``/``dma_ack_o`` and INT_SRC bit
@@ -212,7 +212,7 @@ typedef struct wb_dma_ch_s {
  *   on the far interface; omitted by review decision.
  */
 typedef struct wb_dma_s {
-    pssc_addr_t base;
+    pssc_addr_t base_regs;
     wb_dma_regs_t *regs;
     /*
      * How many channels this instance actually uses.

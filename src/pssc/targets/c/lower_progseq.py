@@ -35,6 +35,8 @@ from .style import coerce as _style
 from ..body_walker import (BodyWalker, CallDispatch, scan_output_locals,
                            scan_write_only)
 from ..call_legality import Ctx
+from .. import group_binding
+from ..group_binding import group_fields
 from ..comments import BLOCK, blank_line, comment_lines, doc_block
 
 _DT_STRUCT = "DataTypeStruct"
@@ -461,7 +463,8 @@ def emit_handle(node, prefixes, link_style: str = "vtable",
         # and reaching the root's copy would need the parent back-pointer §4.1
         # rules out. One pointer per channel is the cheaper of the two.
         lines.append("    const pssc_mem_if *bus;")
-    lines.append("    pssc_addr_t base;")
+    for g in group_fields(comp):
+        lines.append(f"    pssc_addr_t {style.group_base(g)};")
     if reg_map:
         for f in comp.fields:
             if field_is_reg_group(f):
@@ -1514,9 +1517,16 @@ class _CtorMixin:
         m = func.attr
         args = call.args
         if m == "set_handle":
-            # The group has no object: binding it IS setting the component's
-            # base, and every accessor folds its offset from there.
-            return f"({self.h}->base = {self.expr(args[0])})"
+            # The group has no object: binding it IS setting the group's
+            # base, and every accessor in it folds its offset from there.
+            g = chain[0][0]
+            base = f"{self.h}->{self.style.group_base(g)}"
+            if self.reg_map:
+                mt = map_type_name(group, self.style)
+                return (f"({base} = {self.expr(args[0])}, "
+                        f"{self.h}->{mangle(g)} = "
+                        f"({mt} *)(uintptr_t){base})")
+            return f"({base} = {self.expr(args[0])})"
         if m == "get_offset_of_instance":
             return f"0x{scalar_offset(group, _str_const(args[0], m)):x}u"
         if m == "get_offset_of_instance_array":
@@ -1621,16 +1631,6 @@ def func_kind_name(name: str, ctor_names=None):
 
 # --- emission --------------------------------------------------------------
 
-def _addr_arg(ctor) -> Optional[str]:
-    """The constructor's first address-handle argument, or ``None``."""
-    if ctor is None:
-        return None
-    for a in ctor.args.args:
-        if c_type(a.annotation) == "pssc_addr_t":
-            return mangle(a.arg)
-    return None
-
-
 def _sig_all(node, prefixes, link_style: str, qual: str, is_root: bool,
              lifecycle: str = "malloc", style=None,
              ctor_names=None) -> List[str]:
@@ -1706,35 +1706,24 @@ def _lifecycle_impl(node, prefixes, link_style: str, qual: str,
     lines = [f"{qual}void {sym(prefix, 'init')}({prefix_t} *self{sig_params}) {{"]
     if link_style == "vtable":
         lines.append("    self->bus = bus;")
-    # THE DEFAULT BINDING, which the ctor body below may then override with its
-    # own `regs.set_handle(...)`.
-    #
-    # Both exist because models legitimately do it both ways, and dropping
-    # either breaks a working model. `src/pssc/testing/models` declares
+    # THE IMPLICIT BINDING (`group_binding`): a component with one register
+    # group and a constructor that binds none binds it to the constructor's
+    # first address parameter. `src/pssc/testing/models` declares
     # `solve function void ctor(addr_handle_t base) { }` with an EMPTY body and
-    # says so: "the binding is the generator's job, not the model's". The WB DMA
-    # model states it instead. Emitting only the body's version left the example
-    # with an unused parameter and a base of 0; emitting only this one ignored
-    # what the real model actually said.
-    #
-    # The FIRST ADDRESS-TYPED argument, not args[0]: `initialize(int id,
-    # addr_handle_t bank)` would otherwise bind the base to the channel number.
-    addr_arg = _addr_arg(ctor)
-    if addr_arg is not None:
-        lines.append(f"    self->base = {addr_arg};")
-    else:
-        # Nothing to bind. 0 is the honest answer: every accessor then offsets
-        # from 0, which is visibly wrong in a trace rather than quietly wrong.
-        lines.append("    self->base = 0;")
-    if reg_map:
-        # The one cast in the generated driver, and it is here rather than at
-        # every access for that reason. `base` is what the model's constructor
-        # was handed; the layout is how this component reads it.
-        for f in comp.fields:
-            if field_is_reg_group(f):
-                mt = map_type_name(f.datatype, style)
-                lines.append(f"    self->{mangle(f.name)} = "
-                             f"({mt} *)(uintptr_t)self->base;")
+    # says so: "the binding is the generator's job, not the model's". Every
+    # other group is bound by the `set_handle` the body states -- a group
+    # nothing binds was refused before generation started.
+    implicit = group_binding.bindings([comp], ctor_names)[id(comp)].implicit
+    if implicit is not None:
+        g, arg = implicit
+        base = f"self->{style.group_base(g)}"
+        lines.append(f"    {base} = {mangle(arg)};")
+        if reg_map:
+            # The one cast in the generated driver, and it is here (or at a
+            # `set_handle`) rather than at every access for that reason.
+            gf = next(f for f in comp.fields if f.name == g)
+            mt = map_type_name(gf.datatype, style)
+            lines.append(f"    self->{mangle(g)} = ({mt} *)(uintptr_t){base};")
     for f in channel_fields(comp):
         lines.append(f"    pssc_chan1_init(&self->{mangle(f.name)});")
     lines += _field_defaults(comp)

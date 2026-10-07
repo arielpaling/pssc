@@ -158,10 +158,10 @@ def test_missing_offset_function_is_an_error():
         array_base_stride(_Group(), "bank")
 
 
-def test_non_match_body_is_an_error():
-    """An offset function that is not a match over the name cannot be evaluated
-    at build time, so it must not be emitted as a call either."""
-    with pytest.raises(OffsetFoldError, match="not a match over the instance name"):
+def test_an_offset_function_that_returns_nothing_is_an_error():
+    """An offset function whose body returns no offset for the name cannot be
+    evaluated at build time, so it must not be emitted as a call either."""
+    with pytest.raises(OffsetFoldError, match="returns no offset for 'bank'"):
         array_base_stride(_Group(functions=[
             _Fn("get_offset_of_instance_array", body=None, args=("name", "index"))]),
             "bank")
@@ -181,11 +181,10 @@ def test_scalar_offset_comes_from_the_groups_own_function():
     """The model's `get_offset_of_instance` wins over the front end's
     sequential `offset_map`, which put a register placed at 0x8 at 0x4."""
     import zuspec.ir.core as ir
-    case = argparse.Namespace(
+    case = ir.StmtMatchCase(
         pattern=ir.PatternValue(value=ir.ExprConstant(value="stat")),
-        body=[argparse.Namespace(value=ir.ExprConstant(value=0x8))])
-    match = argparse.Namespace(cases=[case])
-    match.__class__ = type("StmtMatch", (argparse.Namespace,), {})
+        body=[ir.StmtReturn(value=ir.ExprConstant(value=0x8))])
+    match = ir.StmtMatch(subject=ir.ExprRefLocal(name="name"), cases=[case])
     g = _Group(functions=[_Fn("get_offset_of_instance", body=[match],
                               args=("name",))],
                offset_map={"stat": 4})
@@ -215,10 +214,9 @@ def _arm_group(expr_src):
                                                 rhs=c(0x20))),
         "shift":      ir.ExprBin(op=ir.BinOp.LShift, lhs=idx, rhs=c(5)),
     }
-    case = argparse.Namespace(pattern=ir.PatternValue(value=c("bank")),
-                              body=[argparse.Namespace(value=exprs[expr_src])])
-    match = argparse.Namespace(cases=[case])
-    match.__class__ = type("StmtMatch", (argparse.Namespace,), {})
+    case = ir.StmtMatchCase(pattern=ir.PatternValue(value=c("bank")),
+                            body=[ir.StmtReturn(value=exprs[expr_src])])
+    match = ir.StmtMatch(subject=ir.ExprRefLocal(name="name"), cases=[case])
     return _Group(functions=[_Fn("get_offset_of_instance_array", body=[match],
                                  args=("name", "index"))])
 

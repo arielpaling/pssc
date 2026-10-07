@@ -79,12 +79,42 @@ def _field_bits(field) -> Optional[int]:
 
     An aggregate-typed field (a nested struct, an array) has no ``bits``, which
     is exactly the §21.14.1(c) case the callers must reject.
+
+    An enum-typed field is as wide as the enum's declared base type
+    (`enum e : bit[2]`). An enum with none has no width in a packed struct
+    (21.13.1); the front end refuses that, and this raises rather than lay
+    the field out at some width it made up -- a zero-width field is how a
+    register value once came out a bit short, with every later field moved.
     """
-    bits = getattr(field.datatype, "bits", None)
+    dt = field.datatype
+    if _dt_name(dt) == "DataTypeEnum":
+        w = int(getattr(dt, "width", 0) or 0)
+        if w <= 0:
+            en = (getattr(dt, "name", "") or "?").split("::")[-1]
+            raise ValueError(
+                f"field '{field.name}' is enum '{en}', which has no base "
+                f"type, so it has no width in a packed struct; declare it as "
+                f"'enum {en} : bit[N]'")
+        return w
+    bits = getattr(dt, "bits", None)
     try:
         return int(bits) if bits is not None else None
     except (TypeError, ValueError):
         return None
+
+
+def field_width(field) -> int:
+    """The width of a packed struct's scalar field; raises for anything else.
+
+    For the places that SUM a struct's fields: an aggregate counted as zero
+    there would shorten the value, not refuse it.
+    """
+    w = _field_bits(field)
+    if w is None:
+        raise ValueError(
+            f"field '{field.name}' of a packed struct is not a scalar, so it "
+            f"has no width in the register value (21.14.1)")
+    return w
 
 
 def field_layout(reg_dtype, resolve=None) -> List[FieldSlice]:

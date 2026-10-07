@@ -124,7 +124,7 @@ typedef struct {
  * run drives the core through the end-to-end wrappers.
  */
 typedef struct wb_dma_ch_s {
-    pssc_addr_t base;
+    pssc_addr_t base_regs;
     /*
      * Which channel this is, in ``dma_req_i``/``dma_ack_o`` and INT_SRC bit
      * numbering.
@@ -172,7 +172,7 @@ typedef struct wb_dma_ch_s {
  *   on the far interface; omitted by review decision.
  */
 typedef struct wb_dma_s {
-    pssc_addr_t base;
+    pssc_addr_t base_regs;
     /*
      * How many channels this instance actually uses.
      *

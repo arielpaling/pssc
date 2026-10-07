@@ -40,12 +40,14 @@ _PRELUDE = "import std_pkg::*;\nimport addr_reg_pkg::*;\n"
 _EXPORT_RUN = "\nextend component pss_top { export target function run; }\n"
 
 
-def compile_model(tmp_path, pss, target):
-    """Generate ``pss`` for ``op-model-<target>``; return the output dir."""
+def compile_model(tmp_path, pss, target, **opts):
+    """Generate ``pss`` for ``op-model-<target>``; return the output dir.
+    ``opts`` are further option attributes (``progseq_manifest=...``)."""
     p = tmp_path / "m.pss"
     p.write_text(_PRELUDE + pss + (_EXPORT_RUN if target == "sv" else ""))
     out = tmp_path / target
-    opts = argparse.Namespace(progseq_root="pss_top", output_dir=str(out))
+    opts = argparse.Namespace(progseq_root="pss_top", output_dir=str(out),
+                              **opts)
     if target == "c":
         opts.c_prefix = "pss_top"
     driver.compile([str(p)], target=f"op-model-{target}", opts=opts)
