@@ -538,14 +538,61 @@ def _field_defaults(comp, target: str = HANDLE) -> List[str]:
             continue
         # A struct-typed attribute carries its defaults on the STRUCT's fields
         # rather than on the instance, so they have to be walked out member by
-        # member.
-        if _dt_name(f.datatype) == _DT_STRUCT:
-            for sf in getattr(f.datatype, "fields", []) or []:
-                siv = getattr(sf, "initial_value", None)
-                if siv is not None:
-                    out.append(f"    {target}->{mangle(f.name)}.{sf.name} = "
-                               f"{_const_expr(siv)};")
+        # member -- through nested structs and arrays of them alike.
+        out += _default_assigns(f"{target}->{mangle(f.name)}", f.datatype,
+                                "    ")
     return out
+
+
+def _default_assigns(lv: str, dtype, pad: str, depth: int = 0) -> List[str]:
+    """Assignments giving ``lv`` (of type ``dtype``) its PSS defaults: one per
+    member that declares an initial value, at any depth, and a loop over an
+    array whose elements have some. Nothing for a type whose defaults are all
+    zero, which `_init`'s storage already is."""
+    cn = _dt_name(dtype)
+    if cn == _DT_STRUCT:
+        out: List[str] = []
+        for sf in getattr(dtype, "fields", []) or []:
+            siv = getattr(sf, "initial_value", None)
+            if siv is not None:
+                out.append(f"{pad}{lv}.{sf.name} = {_const_expr(siv)};")
+            else:
+                out += _default_assigns(f"{lv}.{sf.name}", sf.datatype, pad,
+                                        depth)
+        return out
+    if cn == _DT_ARRAY:
+        n = _array_size(dtype)
+        i = f"i{depth}"
+        body = _default_assigns(f"{lv}[{i}]", dtype.element_type,
+                                pad + "    ", depth + 1)
+        if not body or not n:
+            return []
+        return ([f"{pad}for (unsigned {i} = 0; {i} < {n}u; {i}++) {{"]
+                + body + [f"{pad}}}"])
+    return []
+
+
+def _default_init(dtype) -> Optional[str]:
+    """A C initializer giving a value of ``dtype`` its PSS defaults, or None
+    if they are all zero. Designated, so every member it does not name is
+    zero (C99 6.7.8): `{.y = 7, .q = {.z = 5}}`."""
+    cn = _dt_name(dtype)
+    if cn == _DT_STRUCT:
+        parts = []
+        for sf in getattr(dtype, "fields", []) or []:
+            siv = getattr(sf, "initial_value", None)
+            sub = (_const_expr(siv) if siv is not None
+                   else _default_init(sf.datatype))
+            if sub is not None:
+                parts.append(f".{sf.name} = {sub}")
+        return "{" + ", ".join(parts) + "}" if parts else None
+    if cn == _DT_ARRAY:
+        n = _array_size(dtype)
+        sub = _default_init(dtype.element_type)
+        if sub is None or not n:
+            return None
+        return "{" + ", ".join([sub] * n) + "}"
+    return None
 
 
 def _const_expr(e) -> str:
@@ -1719,8 +1766,11 @@ class _BodyEmitter(CIntSemantics, CallDispatch, BodyWalker):
                                     self.types.of_datatype(s.annotation))
             return [f"{pad}{ct} {name} = {value};"] + tail
         if _dt_name(s.annotation) == _DT_STRUCT:
-            # zero reserved/padding bits
-            return [f"{pad}{ct} {name} = {{0}};"] + tail
+            # The struct's PSS defaults, every other member (and the reserved
+            # and padding bits) zero. C has no default member initializer, so
+            # a declaration that said only `{0}` lost `bit[8] y = 7;`.
+            init = _default_init(s.annotation) or "{0}"
+            return [f"{pad}{ct} {name} = {init};"] + tail
         return [f"{pad}{ct} {name};"] + tail
 
     def stmt_assign(self, s, ind: int) -> List[str]:

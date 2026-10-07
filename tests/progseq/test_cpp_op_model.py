@@ -184,11 +184,13 @@ def test_an_enumerator_survives_into_a_return(h):
                has_not=["return 2;"], code=True)
 
 
-def test_plain_structs_are_aggregates_with_zeroed_members(h):
+def test_plain_structs_are_aggregates_with_initialised_members(h):
     """A generated aggregate stays an aggregate, so a caller can still write
-    `wb_dma_ch_caps_s c{true, false};` -- and a default-constructed one is
-    zeroed rather than holding whatever was on the stack."""
-    assert_cpp(h, has=["struct wb_dma_ch_caps_s {", "bool present = {};"])
+    `wb_dma_ch_caps_s c{true, false};` -- and a default-constructed one holds
+    the model's defaults, zero where it gives none, rather than whatever was
+    on the stack."""
+    assert_cpp(h, has=["struct wb_dma_ch_caps_s {", "bool present = true;",
+                       "struct wb_dma_ch_cfg_s {", "std::uint32_t src = {};"])
 
 
 # --- bodies -----------------------------------------------------------------

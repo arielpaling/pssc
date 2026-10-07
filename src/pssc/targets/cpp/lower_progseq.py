@@ -1334,22 +1334,15 @@ def _field_defaults(comp, emitter, pad: str) -> List[str]:
     operations those capabilities gate -- a driver reporting the device cannot
     do things it can.
 
-    Assignments rather than member initialisers because a struct-typed
-    attribute carries its defaults on the STRUCT's fields, which have to be
-    walked out member by member.
+    Only the field's OWN initializer: a struct-typed field's defaults are its
+    type's default member initializers (`lower_api_types.emit_struct`), which
+    every value of that type gets -- a local or an array element as well.
     """
     out: List[str] = []
     for f in data_members(comp):
         iv = getattr(f, "initial_value", None)
         if iv is not None:
             out.append(f"{pad}this->{mangle(f.name)} = {emitter.expr(iv)};")
-            continue
-        if _dt_name(f.datatype) == _DT_STRUCT:
-            for sf in getattr(f.datatype, "fields", []) or []:
-                siv = getattr(sf, "initial_value", None)
-                if siv is not None:
-                    out.append(f"{pad}this->{mangle(f.name)}.{sf.name} = "
-                               f"{emitter.expr(siv)};")
     return out
 
 

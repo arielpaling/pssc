@@ -151,6 +151,12 @@ def emit_struct(struct_dtype) -> str:
         if (not packed and init is not None and _dt_name(init) == "ExprConstant"
                 and isinstance(init.value, (bool, int))):
             dflt = f" = {int(init.value)}"
+            # An enum item reaches here folded to its value, and SV converts
+            # no integer to an enum implicitly (6.19.3): name the item.
+            if _dt_name(f.datatype) == "DataTypeEnum":
+                for k, v in f.datatype.items.items():
+                    if int(v) == int(init.value):
+                        dflt = f" = {k}"
         lines.append(f"    {sv_member_type(f.datatype)} {f.name}{dflt};")
     lines.append(f"  }} {name};")
     return "\n".join(lines)

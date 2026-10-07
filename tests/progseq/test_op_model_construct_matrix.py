@@ -691,6 +691,38 @@ component pss_top {""" + _ONE + """
   }
 }""", ["write 32 0x1004 0x11"]),
 
+    # --- A struct's defaults, wherever a value of it is -------------------------
+    # A member's initial value belongs to its TYPE: every value of the struct
+    # has it -- a local, a nested member, an array element (LRM 8.1). C and C++
+    # gave it only to a struct field of a component, and 0 everywhere else.
+    "struct defaults in a local and a nested struct": Case("""
+enum m_e { M_A = 1, M_B = 2 }
+struct q_s { bit[8] z = 5; }
+struct p_s { bit[8] x; bit[8] y = 7; m_e m = M_B; q_s q; }
+component pss_top {""" + _ONE + """
+  p_s f;
+  target function void run() {
+    p_s l;
+    a.STS.write_val(l.x + l.y + l.q.z);
+    a.STS.write_val(f.q.z + f.m);
+  }
+}""", ["write 32 0x1004 0xc", "write 32 0x1004 0x7"]),
+
+    "struct defaults in array elements": Case("""
+struct p_s { bit[8] x; bit[8] y = 7; }
+component sub_c {
+  array<p_s, 2> ps;
+  function bit[8] g() { return ps[1].y; }
+}
+component pss_top {""" + _ONE + """
+  sub_c s;
+  array<p_s, 3> qs;
+  target function void run() {
+    qs[0].x = 4;
+    a.STS.write_val(qs[0].x + qs[2].y + s.g());
+  }
+}""", ["write 32 0x1004 0x12"]),
+
     # --- A register value on the API -------------------------------------------
     # A layout is implementation until the API names it: here an operation
     # returns one, another takes one, and the root holds one. C kept every

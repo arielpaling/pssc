@@ -117,6 +117,24 @@ whole IEEE 1800-2023 Annex B list (`new` is missing today), in one module, and
 have both places use it. Locals are renamed by it too. Test: a field and a
 local named after a sample of SV-only keywords, run on Verilator.
 
+**W9. A struct's defaults wherever a value of it is (C, C++; silent).**
+Found while checking W5, not in the report. A member's initial value
+(`struct p_s { bit[8] y = 7; }`) reached only a component's struct field, one
+level deep: a local, a nested struct, or an array element held 0 in C and C++
+where Python and SV hold 7. DONE: C++ puts the default in the type (a default
+member initializer), so every value has it; C has none, so a local is declared
+with a designated initializer (`{.y = 7, .q = {.z = 5}}`) and a field is
+assigned member by member, through nested structs and arrays
+(`_default_init`, `_default_assigns`). An enum default was rendered as its
+number, which C++ and SV reject; it is now the item. Matrix cases: "struct
+defaults in a local and a nested struct", "struct defaults in array elements".
+The cpp-virtual golden moves `wb_dma_ch_caps_s`'s defaults from the
+constructor into the type.
+
+**W10. An array initializer (`array<bit[32], 3> v = {1, 2, 3};`).** Found
+with W9: every target fails with an internal error (`ExprList` has no
+rendering). Not scheduled; the minimum is a `CompileError`.
+
 ## 3. Carried over from the earlier list
 
 These remain from `op-model-field-defects-plan.md` §0 and are not in this

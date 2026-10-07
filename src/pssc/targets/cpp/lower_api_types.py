@@ -79,19 +79,41 @@ def cpp_member_type(dtype) -> str:
     raise ValueError(f"unsupported C++ struct member type {cn}")
 
 
-def emit_struct(struct_dtype) -> str:
-    """A plain struct, in DECLARATION order, with members value-initialised.
+def _cpp_const(e, dtype=None) -> str:
+    """A member's initial value, a constant by construction (as in C).
 
-    `= {}` on every member rather than a constructor: a generated aggregate
-    stays an aggregate, so a caller can still write `wb_dma_ch_caps_s c{true,
-    false};`, and a default-constructed one is zeroed rather than holding
-    whatever was on the stack. The C backend cannot say this in the type and
-    has to zero at each declaration site instead.
+    An enum item reaches here folded to its value, and C++ converts no int
+    to an enum implicitly, so it is spelled as the item that has it."""
+    if _dt_name(e) == "ExprConstant" and isinstance(e.value, bool):
+        return "true" if e.value else "false"
+    if _dt_name(e) == "ExprConstant" and _dt_name(dtype) == _DT_ENUM:
+        for k, v in dtype.items.items():
+            if int(v) == int(e.value):
+                return k
+        return f"static_cast<{cpp_enum_name(dtype)}>({e.value})"
+    from ..c.lower_progseq import _const_expr
+    return _const_expr(e)
+
+
+def emit_struct(struct_dtype) -> str:
+    """A plain struct, in DECLARATION order, every member initialised.
+
+    A default member initializer on every member rather than a constructor: a
+    generated aggregate stays an aggregate, so a caller can still write
+    `wb_dma_ch_caps_s c{true, false};`, and a default-constructed one holds
+    the PSS defaults (`bool present = true;`), zero where the model gives
+    none, rather than whatever was on the stack. The C backend cannot say this
+    in the type and has to initialise at each declaration site instead.
     """
     name = c_struct_name(struct_dtype)
     lines = [f"struct {name} {{"]
     for f in struct_dtype.fields:
-        lines.append(f"    {cpp_member_type(f.datatype)} {f.name} = {{}};")
+        # A member's PSS default is its default member initializer, so every
+        # value of the type has it -- a local, an array element, a member of
+        # another struct -- not only a component's field.
+        iv = getattr(f, "initial_value", None)
+        init = "{}" if iv is None else _cpp_const(iv, f.datatype)
+        lines.append(f"    {cpp_member_type(f.datatype)} {f.name} = {init};")
     lines.append("};")
     return "\n".join(lines)
 

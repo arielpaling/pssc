@@ -1789,7 +1789,8 @@ def _field_defaults(view, members: Dict[str, str]) -> List[str]:
     be = _ExprOnly(members, comp=view)
     for f in _data_fields(view):
         if f.initial_value is not None:
-            lines.append(f"      {members[f.name]} = {be.expr(f.initial_value)};")
+            lines.append(f"      {members[f.name]} = "
+                         f"{be.value_of(f.datatype, f.initial_value)};")
             continue
         # A struct-typed attribute carries its defaults on the STRUCT's fields,
         # not on the instance, so they have to be walked out member by member.
@@ -1797,7 +1798,8 @@ def _field_defaults(view, members: Dict[str, str]) -> List[str]:
             for sf in getattr(f.datatype, "fields", []) or []:
                 if sf.initial_value is not None:
                     lines.append(
-                        f"      {members[f.name]}.{sf.name} = {be.expr(sf.initial_value)};")
+                        f"      {members[f.name]}.{sf.name} = "
+                        f"{be.value_of(sf.datatype, sf.initial_value)};")
     return lines
 
 

@@ -148,10 +148,10 @@ struct wb_dma_desc_s {
 };
 
 struct wb_dma_ch_caps_s {
-    bool present = {};
-    bool ars = {};
-    bool ed = {};
-    bool cbuf = {};
+    bool present = true;
+    bool ars = true;
+    bool ed = true;
+    bool cbuf = true;
 };
 
 struct wb_dma_ch_cfg_s {
@@ -812,12 +812,7 @@ class wb_dma_ch_c : public wb_dma_ch_c_if {
 
 public:
     explicit wb_dma_ch_c(wb_dma_import_if &imp)
-      : imp_(imp), regs(wb_dma_ch_regs_c(imp, 0)) {
-        this->caps.present = true;
-        this->caps.ars = true;
-        this->caps.ed = true;
-        this->caps.cbuf = true;
-    }
+      : imp_(imp), regs(wb_dma_ch_regs_c(imp, 0)) {}
 
     // The PSS constructor. Called by `create()`; call it yourself if you
     // constructed this object directly.
