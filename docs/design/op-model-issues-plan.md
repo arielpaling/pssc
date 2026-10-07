@@ -56,7 +56,11 @@ only what the reported model needs (store, copy, and a constant part-select
 `k[31:0]`, which is how a key reaches 32-bit registers), and refuse arithmetic
 on it.
 
-**W2. Types a public signature names go in the header (C).** A type an
+**W2. Types a public signature names go in the header (C).** DONE:
+`COpModelBackend.api_value_structs` now defaults to the layouts the header
+names (public signatures, component fields, structs it declares) instead of
+none. Matrix case: "register values an operation takes and returns". Planned:
+A type an
 exported operation takes or returns, at any depth (a struct field of struct
 type), is declared in the header; today register value structs are always
 private to the `.c`. One walk over the public signatures decides the set.

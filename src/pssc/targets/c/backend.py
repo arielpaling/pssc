@@ -214,35 +214,55 @@ class COpModelBackend:
 
     @overridable(since='0.1', stability='provisional')
     def api_value_structs(self, model, s: CSettings):
-        """The register value structs to declare in the HEADER. None, by default.
+        """The register value structs to declare in the HEADER: the ones it names.
 
         A REGISTER LAYOUT IS IMPLEMENTATION. It says how the device is poked --
         which bit of which word a field occupies -- and a caller drives the
-        device through the operations, not by assembling register words. So the
-        whole set goes to the .c and the header does not mention registers at
-        all.
+        device through the operations, not by assembling register words. So a
+        layout goes to the .c unless the header itself names it: an operation
+        that takes or returns a register value, a component field holding one
+        (the handles are complete types), or a struct the header declares with
+        one as a member. Then the layout is part of the caller's contract, and
+        leaving it in the .c is a header that does not compile.
 
-        This method is the seam for the build that needs otherwise: an
-        operation that takes or returns a register value makes that layout part
-        of the caller's contract, and a prototype naming a type defined only in
-        the .c is a header that does not compile. Such a build overrides this to
-        name the layouts to hoist -- or returns the API's own answer wholesale:
+        Not `collect_api_types`, which answers a WIDER question -- it also counts
+        the locals of every body, which for the WB DMA model is five layouts
+        that nothing in the generated header names.
 
-            def api_value_structs(self, model, s):
-                from pssc.targets.sv.lower_api_types import collect_api_types
-                _, structs = collect_api_types(self.comps, (), model.ctor_names)
-                return list(structs)
-
-        Not the default, because that collector answers a WIDER question than
-        this one -- it reports every struct reachable from a component field or
-        an import signature, which for the WB DMA model is five layouts that
-        nothing in the generated header goes on to name. Hoisting on it puts
-        register types in the header to satisfy a reference that does not exist.
-
-        The check on getting this wrong is the C compiler, and it is a good one:
-        an unknown type name at the prototype, pointing at the line.
+        A build that wants more in the header (every layout, say, for a caller
+        that assembles register words itself) overrides this and returns them.
         """
-        return ()
+        from ..progseq_model import (FuncKind, _dt_name, func_kind,
+                                     sub_components)
+        value = {id(v) for v in self.value_structs}
+        found, seen = [], set()
+
+        def visit(dt):
+            if dt is None or id(dt) in seen:
+                return
+            seen.add(id(dt))
+            if id(dt) in value:
+                found.append(dt)
+            if _dt_name(dt) == "DataTypeStruct":
+                for f in getattr(dt, "fields", None) or []:
+                    visit(f.datatype)
+            elif _dt_name(dt) == "DataTypeArray":
+                visit(getattr(dt, "element_type", None))
+
+        public = (FuncKind.EXPORT_OP, FuncKind.EXPORT_SOLVE,
+                  FuncKind.CONSTRUCTOR, FuncKind.IMPORT_TASK,
+                  FuncKind.IMPORT_SOLVE)
+        for comp in self.comps:
+            subs = {x.name for x in sub_components(comp)}
+            for f in comp.fields:
+                if f.name not in subs:
+                    visit(f.datatype)
+            for fn in comp.functions:
+                if func_kind(fn, model.ctor_names) in public:
+                    visit(fn.returns)
+                    for a in (fn.args.args if fn.args else []):
+                        visit(a.annotation)
+        return found
 
     @overridable(since='0.1', stability='stable', pairs_with=['emit_api_types'])
     def emit_value_unions(self, model, s: CSettings) -> List[str]:

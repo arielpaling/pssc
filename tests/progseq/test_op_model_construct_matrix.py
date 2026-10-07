@@ -661,6 +661,30 @@ component pss_top {""" + _ONE + """
   target function void run() { go(1); }
 }""", ["write 32 0x1004 0x7f"]),
 
+    # --- A register value on the API -------------------------------------------
+    # A layout is implementation until the API names it: here an operation
+    # returns one, another takes one, and the root holds one. C kept every
+    # layout in the .c, so the header named `st_s` and did not compile.
+    "register values an operation takes and returns": Case("""
+enum st_e : bit[1] { IDLE, BUSY }
+struct st_s : packed_s<> { bit[1] done; st_e mode; bit[30] rsvd; }
+pure component gq_c : reg_group_c {
+  reg_c<st_s, READWRITE, 32> STS;
+  reg_c<bit[32], READWRITE, 32> CTL;
+  function bit[64] get_offset_of_instance(string name) {
+    match (name) { ["STS"]: return 0x0; ["CTL"]: return 0x4; }
+    return 0xFFFFFFFFFFFFFFFF;
+  }
+}
+component pss_top {
+  gq_c q;
+  st_s last;
+  solve function void initialize(addr_handle_t base) { q.set_handle(base); }
+  target function st_s status() { return q.STS.read(); }
+  target function void ack(st_s v) { q.CTL.write_val(v.done); }
+  target function void run() { last = status(); ack(last); }
+}""", ["read 32 0x1000 0x1", "write 32 0x1004 0x1"], mem={0x1000: 0x1}),
+
     # --- Integers wider than 64 bits -------------------------------------------
     # C and C++ have no integer type wider than 64 bits. `bit[256]` was
     # declared `uint64_t`, losing the top 192 bits with no diagnostic; it is
