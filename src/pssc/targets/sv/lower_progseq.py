@@ -19,7 +19,8 @@ from typing import Dict, List, Optional
 import zuspec.ir.core as ir
 
 from .. import pkg_functions as pf
-from ..body_walker import BodyWalker
+from ..bit_select import bit_select
+from ..body_walker import BodyWalker, match_values
 from ..validate_calls import callee_name, is_core_call
 from ..progseq_model import (func_kind, FuncKind, field_is_reg_group, _dt_name,
                              sub_components, SubComp, field_is_channel,
@@ -748,7 +749,21 @@ class _BodyEmitter(BodyWalker):
         return f"{self.expr(base)}.{e.attr}"
 
     def expr_subscript(self, e) -> str:
-        return f"{self.expr(e.value)}[{self.expr(e.slice)}]"
+        sel = bit_select(e, self.types)
+        if sel is None:
+            return f"{self.expr(e.value)}[{self.expr(e.slice)}]"
+        # A bit or part select (`bit_select`). SV has them natively, on
+        # anything with a name -- a variable, a member, a packed struct
+        # field -- which is also all an assignment can target. A select of
+        # any other value (a call's result) is shifted down and masked.
+        base = self.expr(sel.base)
+        lo = (str(sel.lo_const) if sel.lo_const is not None
+              else self.expr(sel.lo))
+        if _is_path(sel.base):
+            if sel.width == 1:
+                return f"{base}[{lo}]"
+            return f"{base}[{sel.hi_const}:{lo}]"
+        return f"(({base} >> {lo}) & {sel.width}'h{sel.mask:x})"
 
     def expr_bin(self, e) -> str:
         op = _BINOP.get(e.op.name)
@@ -1388,19 +1403,7 @@ class _BodyEmitter(BodyWalker):
 
     def _pattern_values(self, pattern) -> List[object]:
         """The label expressions of one `match` arm; none for `default`."""
-        if pattern is None:
-            return []
-        cn = _dt_name(pattern)
-        if cn == "PatternAs" and getattr(pattern, "pattern", None) is None:
-            return []          # the wildcard: `default`
-        if cn == "PatternValue":
-            return [pattern.value]
-        if cn in ("PatternOr", "PatternSequence"):
-            out: List[object] = []
-            for p in pattern.patterns:
-                out += self._pattern_values(p)
-            return out
-        raise ValueError(f"unsupported match pattern {cn}")
+        return match_values(pattern)
 
     def stmt_foreach(self, s, ind: int) -> List[str]:
         """`foreach (a[i]) { ... }` -> an indexed for loop.
@@ -1479,6 +1482,19 @@ def _sv_of(t) -> str:
     if t.dtype is not None:
         return sv_type(t.dtype)
     raise ValueError(f"no SystemVerilog type for a {t.kind} value")
+
+
+def _is_path(e) -> bool:
+    """A reference SV can select bits of directly: a name, a member, an
+    element -- no call anywhere in it."""
+    cn = _dt_name(e)
+    if cn in ("ExprRefLocal", "TypeExprRefSelf"):
+        return True
+    if cn == "ExprAttribute":
+        return _is_path(e.value)
+    if cn == "ExprSubscript":
+        return _is_path(e.value) and _dt_name(e.slice) != "ExprCall"
+    return False
 
 
 def _has_range(pattern) -> bool:

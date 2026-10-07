@@ -32,15 +32,18 @@ from typing import Dict, List, Optional, Set
 import zuspec.ir.core as ir
 
 from .. import comp_inherit as ci
+from ..body_walker import match_values
 
 from ..comments import LINE, append_trailing, blank_line, comment_lines, doc_block
 from ..progseq_model import (
     func_kind, FuncKind, field_is_reg_group, _dt_name, channel_fields,
     sub_components, array_base_stride, scalar_offset,
 )
+from ..bit_select import bit_select
 from ..c.lower_progseq import (
     Prefixes, regular_nodes, post_order, c_string_literal, _array_size,
     _builtin_name, _str_const, func_kind_name, parse_prefix_map,
+    c_select_read, c_select_write,
 )
 from ..c.lower_reg_model import c_struct_name, _prim_bits, _strip_pkg
 
@@ -312,6 +315,14 @@ class _BodyEmitter:
     # the NAME, which restores what the model wrote. A value with no matching
     # enumerator (arithmetic on an encoding, say) falls back to a `static_cast`,
     # which states the conversion rather than performing it silently.
+
+    @property
+    def types(self):
+        """Static PSS types of this body's expressions (`ExprTypes`)."""
+        if getattr(self, "_types", None) is None:
+            from ..expr_types import ExprTypes
+            self._types = ExprTypes(self.fn, self.comp)
+        return self._types
 
     def _expr_type(self, e):
         """Declared type of an expression, or ``None`` when it is not known.
@@ -734,6 +745,9 @@ class _BodyEmitter:
                 return f"this->{self._super()}::{mangle(e.attr)}"
             return f"{self.expr(base)}.{e.attr}"
         if cn == "ExprSubscript":
+            sel = bit_select(e, self.types)
+            if sel is not None:
+                return c_select_read(sel, self.expr)
             return f"{self.expr(e.value)}[{self.expr(e.slice)}]"
         if cn == "ExprBin":
             op = _BINOP.get(e.op.name)
@@ -745,6 +759,10 @@ class _BodyEmitter:
             if op is None:
                 raise ValueError(f"unsupported unary op {e.op.name}")
             return f"{op}({self.expr(e.operand)})"
+        if cn == "ExprIfExp":
+            # `c ? a : b` (8.5.6): only the chosen arm is evaluated, as in C++.
+            return (f"(({self.expr(e.test)}) ? ({self.expr(e.body)}) : "
+                    f"({self.expr(e.orelse)}))")
         if cn == "ExprCast":
             # `static_cast`, not a C cast: the model's casts here are between
             # arithmetic types and an enum, all of which static_cast covers, and
@@ -791,6 +809,11 @@ class _BodyEmitter:
             return self._decl(s, pad)
         if cn == "StmtAssign":
             tgt = s.targets[0]
+            sel = bit_select(tgt, self.types)
+            if sel is not None:
+                value = c_select_write(sel, self.expr, s.value,
+                                       getattr(self.fn, "name", "?"))
+                return [f"{pad}{self.expr(sel.base)} = {value};"]
             value = self._coerce(s.value, self._expr_type(tgt))
             return [f"{pad}{self.expr(tgt)} = {value};"]
         if cn == "StmtAugAssign":
@@ -928,17 +951,8 @@ class _BodyEmitter:
         return out
 
     def _pattern_labels(self, pattern) -> List[str]:
-        if pattern is None:
-            return []
-        cn = _dt_name(pattern)
-        if cn == "PatternValue":
-            return [self.expr(pattern.value)]
-        if cn in ("PatternOr", "PatternSequence"):
-            out: List[str] = []
-            for p in pattern.patterns:
-                out += self._pattern_labels(p)
-            return out
-        raise ValueError(f"unsupported match pattern {cn}")
+        """The arm's labels, rendered; none for `default` (`match_values`)."""
+        return [self.expr(v) for v in match_values(pattern)]
 
     def _yield(self, s, ind: int) -> List[str]:
         """`yield` -- the polling wait primitive.

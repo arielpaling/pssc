@@ -36,8 +36,8 @@ from typing import Any, Callable, Dict, List, Optional, Set
 from .comments import LINE, append_trailing, comment_lines
 from .progseq_model import _dt_name
 
-__all__ = ["BodyWalker", "CallDispatch", "hook_name", "scan_write_only",
-           "scan_output_locals"]
+__all__ = ["BodyWalker", "CallDispatch", "hook_name", "match_values",
+           "scan_write_only", "scan_output_locals"]
 
 _CAMEL_BOUNDARY = re.compile(r"(?<!^)(?=[A-Z])")
 
@@ -107,6 +107,34 @@ def scan_write_only(body) -> Set[str]:
 
     walk(body, True)
     return declared - read
+
+
+def match_values(pattern) -> List[object]:
+    """The value expressions one `match` arm matches; ``[]`` for `default`.
+
+    One reading of a pattern for every rendering. ast2ir writes `default:` as
+    a wildcard (`PatternAs` with no sub-pattern), an enum item as the
+    constant it names, and `[a, b]` as an alternative of values; C, C++ and
+    Python each read patterns with their own copy of this switch, and three of
+    the four copies had no case for the wildcard -- so any `match` with a
+    `default:` was an internal error everywhere but SV.
+
+    A pattern that BINDS a name is refused: PSS has none, and a rendering
+    that dropped the binding would leave its name undeclared.
+    """
+    if pattern is None:
+        return []
+    cn = _dt_name(pattern)
+    if cn == "PatternAs" and getattr(pattern, "pattern", None) is None:
+        return []
+    if cn == "PatternValue":
+        return [pattern.value]
+    if cn in ("PatternOr", "PatternSequence"):
+        out: List[object] = []
+        for p in pattern.patterns:
+            out += match_values(p)
+        return out
+    raise ValueError(f"unsupported match pattern {cn}")
 
 
 def scan_output_locals(node, is_output_call: Callable[[object], bool],

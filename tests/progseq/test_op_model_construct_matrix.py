@@ -85,9 +85,6 @@ class Case(NamedTuple):
 
 
 _D2 = "D2: op-model-c cannot call into a sub-component"
-_D3 = "D3: a bit or part select is dropped, or has no lowering"
-_D4 = "D4: no lowering for an enum-item match pattern"
-_D7 = "D7: no lowering for ?:"
 _D9 = "D9: evaluated at the host language's width, not PSS's"
 _D9_BOOL = "D9: op-model-cpp renders `bit` as bool, and `~` on a bool is an error"
 
@@ -215,7 +212,7 @@ component pss_top {
     c.base_lo = x[31:12];
     a.CTL.write(c);
   }
-}""", ["write 32 0x1000 0xabcde000"], xfail=_on(_ALL, _D3)),
+}""", ["write 32 0x1000 0xabcde000"]),
 
     "a bit select and the high half of 64 bits": Case("""
 component pss_top {""" + _ONE + """
@@ -226,7 +223,17 @@ component pss_top {""" + _ONE + """
     a.STS.write_val(x[63:32]);
   }
 }""", ["write 32 0x1004 0x1", "write 32 0x1004 0x0",
-       "write 32 0x1004 0x12345678"], xfail=_on(_ALL, _D3)),
+       "write 32 0x1004 0x12345678"]),
+
+    "a bit select with a run-time index": Case("""
+component pss_top {""" + _ONE + """
+  target function void run() {
+    bit[8] x = 0xA;
+    int i = 0;
+    while (i < 4) { a.STS.write_val(x[i]); i += 1; }
+  }
+}""", ["write 32 0x1004 0x0", "write 32 0x1004 0x1",
+       "write 32 0x1004 0x0", "write 32 0x1004 0x1"]),
 
     "a part and a bit select assigned": Case("""
 component pss_top {""" + _ONE + """
@@ -237,7 +244,7 @@ component pss_top {""" + _ONE + """
     v[31:28] = 0x5;
     a.STS.write_val(v);
   }
-}""", ["write 32 0x1004 0x5fffff0e"], xfail=_on(_ALL, _D3)),
+}""", ["write 32 0x1004 0x5fffff0e"]),
 
     "a part select of a register field assigned": Case("""
 component pss_top {
@@ -249,9 +256,23 @@ component pss_top {
     a.CTL.write(c);
   }
 }""", ["read 32 0x1000 0xfffff001", "write 32 0x1000 0xffffa001"],
-        mem={0x1000: 0xFFFFF001}, xfail=_on(_ALL, _D3)),
+        mem={0x1000: 0xFFFFF001}),
 
-    # --- D4: match on enum items -----------------------------------------------
+    # --- D4: match arms -------------------------------------------------------
+    # An enum item reaches the IR as the constant it names; what C, C++ and
+    # Python could not lower was the `default:` arm (a wildcard pattern).
+    "a match with a default arm": Case("""
+component pss_top {""" + _ONE + """
+  target function void go(int x) {
+    match (x) {
+      [1]: a.STS.write_val(10);
+      [2, 3]: a.STS.write_val(20);
+      default: a.STS.write_val(30);
+    }
+  }
+  target function void run() { go(1); go(3); go(7); }
+}""", ["write 32 0x1004 0xa", "write 32 0x1004 0x14", "write 32 0x1004 0x1e"]),
+
     "match on enum items": Case("""
 enum mode_e { M0, M1, M2, M3 }
 component pss_top {""" + _ONE + """
@@ -264,8 +285,7 @@ component pss_top {""" + _ONE + """
   }
   target function void run() { go(M0); go(M1); go(M2); go(M3); }
 }""", ["write 32 0x1004 0x2", "write 32 0x1004 0x1",
-       "write 32 0x1004 0x2", "write 32 0x1004 0x3"],
-        xfail=_on(["c", "cpp", "py"], _D4)),
+       "write 32 0x1004 0x2", "write 32 0x1004 0x3"]),
 
     "match on items of a package's enum": Case("""
 package modes_pkg { enum mode_e { M0, M1, M2 } }
@@ -278,8 +298,7 @@ component pss_top {""" + _ONE + """
     }
   }
   target function void run() { go(M2); go(M0); }
-}""", ["write 32 0x1004 0x2", "write 32 0x1004 0x0"],
-        xfail=_on(["c", "cpp", "py"], _D4)),
+}""", ["write 32 0x1004 0x2", "write 32 0x1004 0x0"]),
 
     # --- D5: offset functions are evaluated, whatever their form ---------------
     "offsets from an if chain": Case("""
@@ -409,8 +428,7 @@ component pss_top {
 component pss_top {""" + _ONE + """
   target function void go(bit x) { a.STS.write_val((x == 1) ? 0 : 1); }
   target function void run() { go(0); go(1); }
-}""", ["write 32 0x1004 0x1", "write 32 0x1004 0x0"],
-        xfail=_on(["c", "cpp"], _D7)),
+}""", ["write 32 0x1004 0x1", "write 32 0x1004 0x0"]),
 
     "a nested conditional whose arm reads a register": Case("""
 component pss_top {""" + _ONE + """
@@ -421,7 +439,7 @@ component pss_top {""" + _ONE + """
   target function void run() { go(1); go(0); go(2); }
 }""", ["read 32 0x1004 0x5", "write 32 0x1000 0x5",
        "write 32 0x1000 0x7", "write 32 0x1000 0x9"],
-        mem={0x1004: 5}, xfail=_on(["c", "cpp"], _D7)),
+        mem={0x1004: 5}),
 
     # --- D8: a value-returning operation inside an expression ------------------
     "a value-returning operation in a condition": Case("""

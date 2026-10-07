@@ -32,8 +32,10 @@ from .lower_reg_model import (accessor_base, c_struct_name, _prim_bits,
                              map_type_name)
 from .mem_access import DEFAULT as DEFAULT_MEM, MemAccess
 from .style import coerce as _style
-from ..body_walker import (BodyWalker, CallDispatch, scan_output_locals,
+from ..body_walker import (BodyWalker, CallDispatch, match_values,
+                           scan_output_locals,
                            scan_write_only)
+from ..bit_select import bit_select
 from ..call_legality import Ctx
 from .. import group_binding
 from ..group_binding import group_fields
@@ -63,6 +65,65 @@ _C_KEYWORDS = frozenset({
 
 def mangle(name: str) -> str:
     return name + "_" if name in _C_KEYWORDS else name
+
+
+def _c_int_literal(v: int, width: int) -> str:
+    """A non-negative constant as the narrowest C literal that holds it: a
+    plain `int` up to INT_MAX, `u` to 32 bits, `ull` beyond (or for an
+    operation on a value wider than 32 bits)."""
+    if width > 32 or v > 0xffffffff:
+        return f"0x{v:x}ull"
+    if v > 0x7fffffff:
+        return f"0x{v:x}u"
+    return f"0x{v:x}"
+
+
+def c_select_read(sel, render) -> str:
+    """A bit or part select (`bit_select`) read in C or C++: shifted down and
+    masked. The mask is a plain `int` where it fits, so a select of a narrow
+    value keeps the `int` an operation on it would have -- an unsigned mask
+    would make `x[3] == y` a signed/unsigned comparison."""
+    mask = _c_int_literal(sel.mask, sel.base_width)
+    base = f"({render(sel.base)})"
+    if sel.lo_const == 0:
+        return f"({base} & {mask})"
+    return f"(({base} >> {_select_lo(sel, render)}) & {mask})"
+
+
+def c_select_write(sel, render, value, where: str) -> str:
+    """The whole value after `x[hi:lo] = v` (8.5.x), in C or C++: the
+    selected bits replaced by `v`, truncated to the select's width, and the
+    rest kept. `x` is read as well as written, so a path with a call in it is
+    refused rather than evaluated twice."""
+    if _has_call(sel.base) or (sel.lo_const is None and _has_call(sel.lo)):
+        raise ValueError(
+            f"in '{where}': an assignment to a bit select of a value with a "
+            f"call in its path would read it twice; assign the call to a "
+            f"local first")
+    sfx = "ull" if sel.base_width > 32 else "u"
+    mask = f"0x{sel.mask:x}{sfx}"
+    base = render(sel.base)
+    v = f"(({render(value)}) & {mask})"
+    if sel.lo_const == 0:
+        return f"({base} & ~{mask}) | {v}"
+    lo = _select_lo(sel, render)
+    return f"({base} & ~({mask} << {lo})) | ({v} << {lo})"
+
+
+def _select_lo(sel, render) -> str:
+    return (str(sel.lo_const) if sel.lo_const is not None
+            else f"({render(sel.lo)})")
+
+
+def _has_call(e) -> bool:
+    """Whether an IR expression contains a call (and so may not be read twice)."""
+    if isinstance(e, (list, tuple)):
+        return any(_has_call(x) for x in e)
+    if not dc.is_dataclass(e) or isinstance(e, type):
+        return False
+    if _dt_name(e) == "ExprCall":
+        return True
+    return any(_has_call(getattr(e, f.name)) for f in dc.fields(e))
 
 
 #: Characters a C string literal cannot carry raw, and their escapes.
@@ -1099,8 +1160,23 @@ class _BodyEmitter(CallDispatch, BodyWalker):
                 return f"{ct}_{field}_get({local})"
         return f"{self.expr(base)}.{e.attr}"
 
+    @property
+    def types(self):
+        """Static PSS types of this body's expressions (`ExprTypes`)."""
+        if getattr(self, "_types", None) is None:
+            from ..expr_types import ExprTypes
+            self._types = ExprTypes(self.fn, self.comp)
+        return self._types
+
     def expr_subscript(self, e) -> str:
-        return f"{self.expr(e.value)}[{self.expr(e.slice)}]"
+        sel = bit_select(e, self.types)
+        if sel is None:
+            return f"{self.expr(e.value)}[{self.expr(e.slice)}]"
+        return c_select_read(sel, self.expr)
+
+    def _select_assign_value(self, sel, value) -> str:
+        return c_select_write(sel, self.expr, value,
+                              getattr(self.fn, "name", "?"))
 
     def expr_bin(self, e) -> str:
         op = _BINOP.get(e.op.name)
@@ -1123,6 +1199,12 @@ class _BodyEmitter(CallDispatch, BodyWalker):
         # the IR tree states the grouping and C precedence only sometimes
         # agrees. `~0` in particular has to reach the compiler as written.
         return f"{op}({self.expr(e.operand)})"
+
+    def expr_if_exp(self, e) -> str:
+        """`c ? a : b` (8.5.6). Each arm is evaluated only if chosen, which C's
+        own `?:` guarantees, so an arm that reads a register stays one."""
+        return (f"(({self.expr(e.test)}) ? ({self.expr(e.body)}) : "
+                f"({self.expr(e.orelse)}))")
 
     # -- calls, one hook per Disposition -------------------------------------
     #
@@ -1308,12 +1390,17 @@ class _BodyEmitter(CallDispatch, BodyWalker):
     def stmt_assign(self, s, ind: int) -> List[str]:
         pad = self.pad(ind)
         tgt = s.targets[0]
+        sel = bit_select(tgt, self.types)
+        if sel is not None:
+            tgt, value = sel.base, self._select_assign_value(sel, s.value)
+        else:
+            value = self.expr(s.value)
         if self.reg_style == "accessors":
             sf = self._struct_field(tgt)
             if sf is not None:
                 ct, local, field = sf
-                return [f"{pad}{ct}_{field}_set(&{local}, {self.expr(s.value)});"]
-        return [f"{pad}{self.expr(tgt)} = {self.expr(s.value)};"]
+                return [f"{pad}{ct}_{field}_set(&{local}, {value});"]
+        return [f"{pad}{self.expr(tgt)} = {value};"]
 
     def stmt_aug_assign(self, s, ind: int) -> List[str]:
         op = _BINOP.get(s.op.name)
@@ -1446,17 +1533,8 @@ class _BodyEmitter(CallDispatch, BodyWalker):
         return out
 
     def _pattern_labels(self, pattern) -> List[str]:
-        if pattern is None:
-            return []
-        cn = _dt_name(pattern)
-        if cn == "PatternValue":
-            return [self.expr(pattern.value)]
-        if cn in ("PatternOr", "PatternSequence"):
-            out: List[str] = []
-            for p in pattern.patterns:
-                out += self._pattern_labels(p)
-            return out
-        raise ValueError(f"unsupported match pattern {cn}")
+        """The arm's labels, rendered; none for `default` (`match_values`)."""
+        return [self.expr(v) for v in match_values(pattern)]
 
     def stmt_yield(self, s, ind: int) -> List[str]:
         """`yield` -- the polling wait primitive.

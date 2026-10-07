@@ -18,7 +18,19 @@ from the model that found it.
 | F1 (D1), with Q2: one base per group in C; unbound group refused (`group_binding.py`) | done |
 | F5 (D5): offset functions evaluated (`progseq_model._OffsetEval`); bad ones are a `CompileError` | done |
 | F6 (D6): enum base type carried by ast2ir; one width rule (`reg_field_resolve.field_width`) | done |
-| F9 (D9), F2 (D2), F3 (D3), F4 (D4), F7 (D7) | open |
+| F3 (D3): ast2ir keeps a select on a local/constant; `bit_select.py` reads it, every emitter renders it (read, and read-modify-write) | done |
+| F4 (D4): one pattern reading (`body_walker.match_values`) | done |
+| F7 (D7): `?:` in C and C++ | done |
+| F9 (D9), F2 (D2) | open |
+
+Found on the way:
+
+* **D4 was not about enum items.** ast2ir folds an enum item in a pattern to
+  its constant. What C, C++ and Python could not lower was the `default:` arm
+  (a wildcard `PatternAs`), so ANY `match` with a `default:` failed on all
+  three. corpus `types.enum.match.001` now passes on op-model-py.
+* **C and C++ cannot lower `repeat (i : N)`** (`StmtFor`: "defines no
+  stmt_for()"). Not in the report; not yet scheduled.
 
 T1d (a mutation check of the C base) is covered by history: the T1 cases were
 strict xfails on C before F1 and pass after it.

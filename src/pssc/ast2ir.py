@@ -4696,9 +4696,12 @@ class AstToIrTranslator:
             first_name = first_id.getId() if isinstance(first_id, pss_ast.ExprId) else str(first_id)
             if first_name in ctx.local_vars:
                 local_name = ctx.local_renames.get(first_name, first_name)
+                # The part select (`x[31:12]`) is the reference's, not an
+                # element's: every return below applies it, or `x[31:12]`
+                # silently reads as `x`.
                 if len(elems) == 1:
-                    return self._apply_subscripts(
-                        ctx, elems[0], ir.ExprRefLocal(name=local_name))
+                    return self._apply_ref_bit_slice(expr, self._apply_subscripts(
+                        ctx, elems[0], ir.ExprRefLocal(name=local_name)))
                 # Multi-element path rooted at a local variable (e.g. p.x, s.upper())
                 result_lv: ir.Expr = self._apply_subscripts(
                     ctx, elems[0], ir.ExprRefLocal(name=local_name))
@@ -4719,7 +4722,7 @@ class AstToIrTranslator:
                             if arg_ir is not None:
                                 args.append(arg_ir)
                         result_lv = ir.ExprCall(func=result_lv, args=args)
-                return result_lv
+                return self._apply_ref_bit_slice(expr, result_lv)
 
         # A call the linker resolved to a package-scope function: a function
         # named by its qualified name, not a member of `self`. Deciding this
@@ -4743,9 +4746,9 @@ class AstToIrTranslator:
                             f"'{qname}'")
                         return ir.ExprRefUnresolved(name=qname)
                     args.append(arg_ir)
-                return self._apply_subscripts(
+                return self._apply_ref_bit_slice(expr, self._apply_subscripts(
                     ctx, elems[0],
-                    ir.ExprCall(func=ir.ExprRefUnresolved(name=qname), args=args))
+                    ir.ExprCall(func=ir.ExprRefUnresolved(name=qname), args=args)))
 
         # A single-element reference may name a constant rather than a field:
         # an enum item, or a package-scope `static const` imported by name.
@@ -4756,13 +4759,16 @@ class AstToIrTranslator:
             name = id_obj.getId() if isinstance(id_obj, pss_ast.ExprId) else str(id_obj)
             enum_val = self._resolve_enum_constant(ctx, name)
             if enum_val is not None:
-                return ir.ExprConstant(value=enum_val)
+                return self._apply_ref_bit_slice(
+                    expr, ir.ExprConstant(value=enum_val))
             if name in ctx.const_map and name not in ctx.local_vars:
-                return ir.ExprConstant(value=ctx.const_map[name])
+                return self._apply_ref_bit_slice(
+                    expr, ir.ExprConstant(value=ctx.const_map[name]))
             if name not in ctx.local_vars:
                 linked = self._linked_static_const(ctx, expr)
                 if linked is not None:
-                    return ir.ExprConstant(value=linked)
+                    return self._apply_ref_bit_slice(
+                        expr, ir.ExprConstant(value=linked))
 
         # Build the ExprAttribute chain starting from self. (`super.x` was
         # handled above: the front end gives it its own node, ExprRefPathSuper.)

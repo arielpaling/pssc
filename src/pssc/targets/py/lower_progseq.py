@@ -44,7 +44,9 @@ from typing import Dict, FrozenSet, List, Optional, Set
 import zuspec.ir.core as ir
 
 from .. import pkg_functions as pf
-from ..body_walker import BodyWalker, CallDispatch, scan_output_locals
+from ..bit_select import bit_select
+from ..body_walker import (BodyWalker, CallDispatch, match_values,
+                           scan_output_locals)
 from ..call_legality import Ctx
 from ..validate_calls import callee_name, is_super_call
 from ..comments import HASH
@@ -607,7 +609,43 @@ class _BodyEmitter(CallDispatch, BodyWalker):
         return f"{self.expr(base)}.{e.attr}"
 
     def expr_subscript(self, e) -> str:
-        return f"{self.expr(e.value)}[{self.expr(e.slice)}]"
+        sel = bit_select(e, self.types)
+        if sel is None:
+            return f"{self.expr(e.value)}[{self.expr(e.slice)}]"
+        # A bit or part select (`bit_select`): shifted down and masked.
+        # Python's `>>` of a negative value fills with ones and the mask
+        # keeps the selected bits, so a signed base reads as its bit pattern.
+        base = self.expr(sel.base)
+        base = base if _atomic(base) else f"({base})"
+        if sel.lo_const == 0:
+            return f"({base} & 0x{sel.mask:x})"
+        lo = str(sel.lo_const) if sel.lo_const is not None \
+            else self._shift_amount(sel.lo)
+        return f"(({base} >> {lo}) & 0x{sel.mask:x})"
+
+    def _shift_amount(self, e) -> str:
+        text = self.expr(e)
+        return text if _atomic(text) else f"({text})"
+
+    def _select_assign(self, sel, value, pad: str) -> List[str]:
+        """`x[hi:lo] = v`: the selected bits of `x` replaced by `v`, converted
+        to the select's width, and the others kept (8.5.x)."""
+        if any(_dt_name(n) == "ExprCall" for n in _nodes(sel.base)) or (
+                sel.lo_const is None
+                and any(_dt_name(n) == "ExprCall" for n in _nodes(sel.lo))):
+            raise ValueError(
+                f"in '{getattr(self.fn, 'name', '?')}': an assignment to a "
+                f"bit select of a value with a call in its path would read it "
+                f"twice; assign the call to a local first")
+        base = self.expr(sel.base)
+        v = self.convert_to(value, PssType("int", sel.width, False))
+        v = v if _atomic(v) else f"({v})"
+        if sel.lo_const == 0:
+            return [f"{pad}{base} = ({base} & ~0x{sel.mask:x}) | {v}"]
+        lo = str(sel.lo_const) if sel.lo_const is not None \
+            else self._shift_amount(sel.lo)
+        return [f"{pad}{base} = ({base} & ~(0x{sel.mask:x} << {lo})) | "
+                f"({v} << {lo})"]
 
     def expr_bin(self, e) -> str:
         op = e.op.name
@@ -1633,6 +1671,9 @@ class _BodyEmitter(CallDispatch, BodyWalker):
     def stmt_assign(self, s, ind: int) -> List[str]:
         pad = self.pad(ind)
         tgt = s.targets[0]
+        sel = bit_select(tgt, self.types)
+        if sel is not None:
+            return self._select_assign(sel, s.value, pad)
         target = self.types.type_of(tgt)
         if self._struct_dtype(target) is not None:
             # Into the target, in place: that is what an assignment to an
@@ -1940,17 +1981,8 @@ class _BodyEmitter(CallDispatch, BodyWalker):
         return lines
 
     def _pattern_labels(self, pattern) -> List[str]:
-        if pattern is None:
-            return []
-        cn = _dt_name(pattern)
-        if cn == "PatternValue":
-            return [self.expr(pattern.value)]
-        if cn in ("PatternOr", "PatternSequence"):
-            out: List[str] = []
-            for p in pattern.patterns:
-                out += self._pattern_labels(p)
-            return out
-        raise ValueError(f"unsupported match pattern {cn}")
+        """The arm's labels, rendered; none for `default` (`match_values`)."""
+        return [self.expr(v) for v in match_values(pattern)]
 
     def stmt_yield(self, s, ind: int) -> List[str]:
         """`yield` -- the wait primitive, whose cost is the form's to say.

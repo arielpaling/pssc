@@ -239,6 +239,14 @@ class ExprTypes:
 
     def _ExprSubscript(self, e):
         base = self.type_of(e.value)
+        if base is not None and base.kind == "int":
+            # A bit or part select (Table 21): unsigned, as wide as it selects.
+            from .bit_select import bit_select
+            try:
+                sel = bit_select(e, self)
+            except ValueError:
+                return None
+            return PssType("int", sel.width, False) if sel else None
         if base is None or base.kind != "array":
             return None
         dt = base.dtype
