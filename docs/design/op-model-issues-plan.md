@@ -105,7 +105,10 @@ resolution from ast2ir. If pssparser does not resolve a qualified call, that
 gets filed there rather than patched by name lookup in pssc. Applies to
 imports and to ordinary package functions alike, on every target.
 
-**W8. One SV keyword table, complete.** `sv/context.py` and
+**W8. One SV keyword table, complete.** DONE: `sv/keywords.py` (Annex B,
+whole); each renderer keeps its rename spelling; op-model-sv now renames
+locals too. Matrix case: "fields, a local and a parameter named as SV
+keywords". The SV testbench's `buf` field is now `_zsp_buf`. Planned: `sv/context.py` and
 `sv/lower_progseq.py` each keep an `_SV_KEYWORDS`, and they disagree in what
 they rename to (`_zsp_<name>` against `<name>_`). Keep one table, holding the
 whole IEEE 1800-2023 Annex B list (`new` is missing today), in one module, and

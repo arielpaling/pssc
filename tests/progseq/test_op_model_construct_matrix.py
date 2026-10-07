@@ -661,6 +661,20 @@ component pss_top {""" + _ONE + """
   target function void run() { go(1); }
 }""", ["write 32 0x1004 0x7f"]),
 
+    # --- Names another language reserves -----------------------------------------
+    # Each is free in PSS and reserved in SystemVerilog (IEEE 1800 Annex B);
+    # `new` is reserved in C++ too. SV renamed from two partial
+    # lists, and a field `new` was in neither.
+    "fields, a local and a parameter named as SV keywords": Case("""
+component pss_top {""" + _ONE + """
+  int new = 1;
+  int inside = 2;
+  int xor = 3;
+  int unique0 = 4;
+  target function int add(int untyped) { int wor = untyped + new; return wor; }
+  target function void run() { a.STS.write_val(add(inside + xor + unique0)); }
+}""", ["write 32 0x1004 0xa"]),
+
     # --- A register value on the API -------------------------------------------
     # A layout is implementation until the API names it: here an operation
     # returns one, another takes one, and the root holds one. C kept every

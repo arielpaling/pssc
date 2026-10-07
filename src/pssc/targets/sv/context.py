@@ -9,27 +9,10 @@ import dataclasses as dc
 import re
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-# SV keywords that clash with user field/variable names.
-# When a PSS field is named one of these, prefix it with ``_zsp_``.
-_SV_KEYWORDS: frozenset = frozenset([
-    "initial", "final", "priority", "property",
-    "type", "static", "local", "protected", "virtual",
-    "class", "extends", "implements", "interface",
-    "package", "import", "export", "ref",
-    "input", "output", "inout",
-    "module", "endmodule", "function", "endfunction",
-    "task", "endtask", "endclass", "endpackage",
-    "time", "event", "real", "integer",
-    "wire", "reg", "logic", "bit",
-    "always", "always_comb", "always_ff",
-    "begin", "end", "fork", "join",
-    "if", "else", "case", "endcase", "default",
-    "for", "foreach", "while", "do", "repeat",
-    "return", "break", "continue",
-    "new", "null", "this", "super",
-    "rand", "randc", "constraint",
-    "assign", "force", "release",
-])
+# SV keywords that clash with user field/variable names: IEEE 1800 Annex B,
+# from the one table (`keywords.py`). A PSS field named one of these is
+# prefixed with ``_zsp_``.
+from .keywords import SV_KEYWORDS as _SV_KEYWORDS
 
 import zuspec.ir.core as ir
 

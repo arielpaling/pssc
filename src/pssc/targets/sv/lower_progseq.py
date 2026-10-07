@@ -35,15 +35,10 @@ _DT_ENUM = "DataTypeEnum"
 _DT_CHANDLE = "DataTypeChandle"
 _DT_CHANNEL = "DataTypeChannel"
 
-# SystemVerilog reserved words that can appear as PSS identifiers; renamed by
-# appending '_' so generated code compiles. (Extend as needed.)
-_SV_KEYWORDS = frozenset({
-    "priority", "wait", "do", "final", "time", "table", "type", "begin", "end",
-    "fork", "join", "wire", "reg", "logic", "bit", "byte", "int", "shortint",
-    "longint", "module", "endmodule", "class", "endclass", "task", "function",
-    "return", "default", "force", "release", "assign", "static", "automatic",
-    "local", "protected", "virtual", "ref", "const", "event", "disable",
-})
+# SystemVerilog's reserved words (IEEE 1800 Annex B, `keywords.py`); a PSS
+# identifier spelled as one is renamed by appending '_' so generated code
+# compiles.
+from .keywords import SV_KEYWORDS as _SV_KEYWORDS
 
 
 def _strip_pkg(name: Optional[str]) -> str:
@@ -718,7 +713,9 @@ class _BodyEmitter(BodyWalker):
         return repr(v)
 
     def expr_ref_local(self, e) -> str:
-        return self.arg_rename.get(e.name, e.name)
+        # A local is renamed as a parameter or field is: `int wor;` does not
+        # parse. `_local_names` already spells them this way.
+        return self.arg_rename.get(e.name) or mangle(e.name)
 
     def type_expr_ref_self(self, e) -> str:
         return "this"

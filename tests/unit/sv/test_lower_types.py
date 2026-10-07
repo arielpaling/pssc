@@ -204,7 +204,9 @@ class TestCollectionTypes:
         )
         sv = lower_struct(ctx, dt)
         text = emitter.emit_one(sv)
-        assert "bit [7:0] [16] buf;" in text
+        # `buf` is an SV gate primitive (IEEE 1800 Annex B), so the field
+        # is renamed; `bit [7:0] [16] buf;` does not parse.
+        assert "bit [7:0] [16] _zsp_buf;" in text
 
     def test_map_field(self, ctx, emitter):
         dt = ir.DataTypeStruct(
