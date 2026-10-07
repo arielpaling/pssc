@@ -43,8 +43,10 @@ from ..bit_select import bit_select
 from ..c.lower_progseq import (
     Prefixes, regular_nodes, post_order, c_string_literal, _array_size,
     _builtin_name, _str_const, func_kind_name, parse_prefix_map,
-    c_select_read, c_select_write,
+    c_select_read, c_select_write, CIntSemantics, _c_carrier,
 )
+from ..expr_types import (CONTEXT_BINARY, CONTEXT_UNARY, LEFT_TYPED,
+                          RELATIONAL, is_integral)
 from ..c.lower_reg_model import c_struct_name, _prim_bits, _strip_pkg
 
 _DT_STRUCT = "DataTypeStruct"
@@ -246,14 +248,21 @@ _UNOP = {
 }
 
 
-class _BodyEmitter:
-    """Translate one operation body to C++ lines."""
+class _BodyEmitter(CIntSemantics):
+    """Translate one operation body to C++ lines.
+
+    Integers are carried out at their PSS types by `CIntSemantics`, which C++
+    shares with C: the two languages' integer rules are the same."""
 
     def __init__(self, fn, comp, names, *, imports=None,
                  yield_mode: str = "none", match_default: str = "message",
                  message_style: str = "import", cls: str = "",
-                 ctor_names=None):
+                 ctor_names=None, ctx=None):
         self.fn = fn
+        #: The compile context, for `ExprTypes`.
+        self.ctx = ctx
+        #: `IntSemantics`' per-root final types.
+        self._final = {}
         #: This compile's constructor names, for the call site that has only a
         #: name to classify (`ch[i].initialize(...)`).
         self.ctor_names = ctor_names
@@ -321,8 +330,29 @@ class _BodyEmitter:
         """Static PSS types of this body's expressions (`ExprTypes`)."""
         if getattr(self, "_types", None) is None:
             from ..expr_types import ExprTypes
-            self._types = ExprTypes(self.fn, self.comp)
+            self._types = ExprTypes(self.fn, self.comp, self.ctx)
         return self._types
+
+    # -- integer spelling: C's, with C++'s names (`CIntSemantics`) -----------
+
+    def int_type_name(self, ct: str) -> str:
+        return f"std::{ct}"
+
+    def int_cast_type(self, dtype) -> str:
+        return cpp_type(dtype)
+
+    def int_cast_text(self, ct: str, text: str, atom: bool) -> str:
+        # `static_cast`, as everywhere in this backend (see `expr`'s cast).
+        return f"static_cast<{ct}>({text})"
+
+    def int_leaf_text(self, e, s, t) -> str:
+        """C's rule, plus one: `bit` is a C++ `bool`, and arithmetic on a
+        `bool` is refused by `-Wbool-operation` (`~x`), so a one-bit operand
+        is converted to an integer first."""
+        if s.width == 1 and _c_carrier(s, t.as_int()) is None \
+                and e is not getattr(self, "_int_root_e", None):
+            return self.int_cast_text("std::uint32_t", self.expr(e), True)
+        return CIntSemantics.int_leaf_text(self, e, s, t)
 
     def _expr_type(self, e):
         """Declared type of an expression, or ``None`` when it is not known.
@@ -351,7 +381,12 @@ class _BodyEmitter:
         return None
 
     def _coerce(self, e, dtype) -> str:
-        """Render ``e`` where a value of ``dtype`` is expected."""
+        """Render ``e`` where a value of ``dtype`` is expected: converted to
+        it if it is an integer type (8.7.2), named if it is an enum."""
+        if dtype is not None and _dt_name(dtype) != _DT_ENUM:
+            target = self.types.of_datatype(dtype)
+            if target is not None and target.kind == "int":
+                return self.convert_to(e, target)
         s = self.expr(e)
         if dtype is None or _dt_name(dtype) != _DT_ENUM:
             return s
@@ -538,7 +573,17 @@ class _BodyEmitter:
             raise ValueError(
                 f"register method '{func.attr}' takes {want} argument(s), "
                 f"got {len(call.args)}")
-        args = ", ".join(self.expr(a) for a in call.args)
+        # A value written is converted to the register's width (21.14.1),
+        # like any argument to a `bit[N]` parameter; a value struct is
+        # passed whole.
+        from ..reg_layout import value_bits
+        from ..expr_types import PssType
+        reg_t = self.types.type_of(func.value)
+        bits = (value_bits(reg_t.dtype)
+                if reg_t is not None and _dt_name(reg_t.dtype) == "DataTypeRegister"
+                else 32)
+        val_t = PssType("int", bits, False)
+        args = ", ".join(self.convert_to(a, val_t) for a in call.args)
         return f"{self.expr(func.value)}.{func.attr}({args})"
 
     def _chan_receiver(self, chain) -> Optional[str]:
@@ -767,16 +812,31 @@ class _BodyEmitter:
                 return c_select_read(sel, self.expr)
             return f"{self.expr(e.value)}[{self.expr(e.slice)}]"
         if cn == "ExprBin":
+            if e.op.name in RELATIONAL:
+                text = self._int_compare(e)     # None if an operand is an enum
+                if text is not None:
+                    return text
+            elif e.op.name in CONTEXT_BINARY or e.op.name in LEFT_TYPED:
+                t = self.types.type_of(e)
+                if is_integral(t) and t.kind != "enum":
+                    return self._int_root(e, t.as_int()).text
             op = _BINOP.get(e.op.name)
             if op is None:
                 raise ValueError(f"unsupported binop {e.op.name}")
             return self._binop(e, op)
         if cn == "ExprUnary":
+            if e.op.name in CONTEXT_UNARY:
+                t = self.types.type_of(e)
+                if is_integral(t) and t.kind != "enum":
+                    return self._int_root(e, t.as_int()).text
             op = _UNOP.get(e.op.name)
             if op is None:
                 raise ValueError(f"unsupported unary op {e.op.name}")
             return f"{op}({self.expr(e.operand)})"
         if cn == "ExprIfExp":
+            t = self.types.type_of(e)
+            if t is not None and t.kind == "int":
+                return self._int_root(e, t).text
             # `c ? a : b` (8.5.6): only the chosen arm is evaluated, as in C++.
             return (f"(({self.expr(e.test)}) ? ({self.expr(e.body)}) : "
                     f"({self.expr(e.orelse)}))")
@@ -1317,7 +1377,8 @@ def emit_component(node, names, ns: str, *, imports=None, is_root: bool,
         return emit_hier_component(node, names, ns, model, imports=imports,
                                    is_root=is_root, parents=parents,
                                    ctor_names=ctor_names, **be_kw)
-    be_kw = dict(be_kw, imports=imports, ctor_names=ctor_names)
+    be_kw = dict(be_kw, imports=imports, ctor_names=ctor_names,
+                 ctx=getattr(model, "ctx", None))
     comp = node.dtype
     cls = names[comp]
     ctor = _ctor(comp, ctor_names)
@@ -1442,7 +1503,8 @@ def emit_hier_component(node, names, ns: str, model, *, imports=None,
     interfaces are derived from VIRTUALLY: the class implements its base's
     interface through its base class, and its own, which extends that one.
     """
-    be_kw = dict(be_kw, imports=imports, ctor_names=ctor_names)
+    be_kw = dict(be_kw, imports=imports, ctor_names=ctor_names,
+                 ctx=getattr(model, "ctx", None))
     comp = node.dtype
     cls = names[comp]
     base, own_fields, own_fns = _declared(model, comp)

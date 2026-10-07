@@ -45,6 +45,7 @@ import zuspec.ir.core as ir
 
 from .. import pkg_functions as pf
 from ..bit_select import bit_select
+from ..int_semantics import IntSemantics, _Val, _br
 from ..body_walker import (BodyWalker, CallDispatch, match_values,
                            scan_output_locals)
 from ..call_legality import Ctx
@@ -56,9 +57,7 @@ from ..progseq_model import (FuncKind, INIT_EXEC_KINDS, _dt_name,
                              func_kind, resolve_ref, struct_base,
                              field_is_reg_group, scalar_offset, sub_components)
 from ..expr_types import (CONTEXT_BINARY, CONTEXT_UNARY, LEFT_TYPED,
-                          INT, RELATIONAL, ExprTypes, PssType,
-                          assign_source_type,
-                          convert, int_range, is_integral, merge)
+                          INT, RELATIONAL, ExprTypes, PssType, is_integral)
 from . import pss_int
 from .lower_reg_model import accessor_map, value_class_name
 from .pss_format import parse_format
@@ -212,59 +211,10 @@ def _params(fn):
     return tuple(getattr(getattr(fn, "args", None), "args", None) or ())
 
 
-# -- integer arithmetic (LRM 8.5.1, 8.7) ---------------------------------------
-#
-# A Python int has no width, so every PSS operation is carried out at the type
-# `ExprTypes.propagate` gives it and brought back into range where it could
-# leave it. "Could" is decided from each value's RANGE, which is known at
-# generation time far more often than not: a `bit[8]` read is in [0, 255], a
-# constant is itself. A wrap that cannot change the value is not emitted, so
-# `x = y` stays `x = y` and a counter's `n + 1` gets its `& 0xffffffff`.
-#
-# Two relaxations make that affordable, and both are exact:
-#
-# * the RING operators (`+ - * & | ^ << ~`, unary `-`) give the same low N bits
-#   whatever the operands' higher bits are, so an operand that is one of them
-#   is left unwrapped and the wrap happens once, where the value is used;
-# * `//` and `%` ARE PSS's `/` and `%` on operands that cannot be negative,
-#   which is every unsigned operation. Only a possibly-negative one needs
-#   `_pss_div`, which truncates toward zero.
-
-#: Binary operators that commute with reduction modulo 2**N.
-_RING_BIN = {"Add", "Sub", "Mult", "BitAnd", "BitOr", "BitXor", "LShift"}
-
+#: How Python spells the integer operators `IntSemantics` renders.
 _INT_PYOP = {"Add": "+", "Sub": "-", "Mult": "*", "BitAnd": "&",
              "BitOr": "|", "BitXor": "^", "LShift": "<<", "RShift": ">>",
              "Div": "//", "Mod": "%"}
-
-_FOLD = {
-    "Add": lambda a, b: a + b, "Sub": lambda a, b: a - b,
-    "Mult": lambda a, b: a * b, "BitAnd": lambda a, b: a & b,
-    "BitOr": lambda a, b: a | b, "BitXor": lambda a, b: a ^ b,
-    "LShift": lambda a, b: a << b, "RShift": lambda a, b: a >> b,
-    "Div": pss_int._pss_div, "Mod": pss_int._pss_mod,
-}
-
-
-@dc.dataclass
-class _Val:
-    """An integer expression as rendered: its text and what it may hold.
-
-    ``lo``/``hi`` are ``None`` where the range is not known -- which is what
-    makes the value be wrapped before anything relies on it.
-    """
-    text: str
-    lo: Optional[int]
-    hi: Optional[int]
-    atom: bool = True
-    const: Optional[int] = None
-
-    def within(self, lo: int, hi: int) -> bool:
-        return (self.lo is not None and self.hi is not None
-                and lo <= self.lo and self.hi <= hi)
-
-    def nonneg(self) -> bool:
-        return self.lo is not None and self.lo >= 0
 
 
 def _atomic(text: str) -> bool:
@@ -306,35 +256,9 @@ def _unbracket(text: str) -> str:
     return text
 
 
-def _br(v: _Val) -> str:
-    return v.text if v.atom else f"({v.text})"
-
-
 def _const(c: int, hexa: bool = False) -> _Val:
     text = f"0x{c:x}" if hexa and c >= 0 else str(c)
     return _Val(text, c, c, atom=c >= 0, const=c)
-
-
-def _mul_range(a: _Val, b: _Val):
-    if None in (a.lo, a.hi, b.lo, b.hi):
-        return None, None
-    p = [a.lo * b.lo, a.lo * b.hi, a.hi * b.lo, a.hi * b.hi]
-    return min(p), max(p)
-
-
-def _bitwise_range(op: str, a: _Val, b: _Val, lo: int, hi: int):
-    """The range of `a <op> b`, for `& | ^`. Two's complement on unbounded
-    ints: an operand in [0, m] bounds `&` by m whatever the other is, and two
-    operands inside a type's range give a result inside it."""
-    if op == "BitAnd":
-        cands = [v.hi for v in (a, b) if v.nonneg() and v.hi is not None]
-        if cands:
-            return 0, min(cands)
-    if a.nonneg() and b.nonneg() and a.hi is not None and b.hi is not None:
-        return 0, (1 << max(a.hi.bit_length(), b.hi.bit_length())) - 1
-    if a.within(lo, hi) and b.within(lo, hi):
-        return lo, hi
-    return None, None
 
 
 @contextmanager
@@ -343,7 +267,7 @@ def _nullctx():
     yield
 
 
-class _BodyEmitter(CallDispatch, BodyWalker):
+class _BodyEmitter(IntSemantics, CallDispatch, BodyWalker):
     """Translate one operation body to Python lines.
 
     A node kind is handled by a hook named after it (`StmtForeach` ->
@@ -722,6 +646,33 @@ class _BodyEmitter(CallDispatch, BodyWalker):
         a, b = self._arms(e, self.expr)
         return f"({a} if {test} else {b})"
 
+    # -- integer spelling (`IntSemantics` decides; this writes Python) -------
+
+    def int_atomic(self, text: str) -> bool:
+        return _atomic(text)
+
+    def int_const(self, c: int, t, hexa: bool = False) -> _Val:
+        return _const(c, hexa)
+
+    def int_mask_text(self, v: _Val, hi: int) -> str:
+        return f"{_br(v)} & 0x{hi:x}"
+
+    def int_sint_text(self, v: _Val, width: int) -> str:
+        return f"_pss_sint({v.text}, {width})"
+
+    def int_ternary_text(self, test: str, a: _Val, b: _Val) -> str:
+        return f"({_br(a)} if {test} else {_br(b)})"
+
+    def int_binop_text(self, op: str, a: _Val, b: _Val) -> str:
+        return f"{_br(a)} {_INT_PYOP[op]} {_br(b)}"
+
+    def int_signed_div_text(self, op: str, a: _Val, b: _Val) -> str:
+        # PSS `/` truncates toward zero where `//` floors.
+        return f"_pss_{op.lower()}({a.text}, {b.text})"
+
+    def int_cmp_text(self, op: str, a: _Val, b: _Val) -> str:
+        return f"{_br(a)} {_BINOP[op]} {_br(b)}"
+
     def _arms(self, e, render):
         """The two arms of `?:`, refused if either would be hoisted: an arm
         runs only if chosen, and a hoisted call runs regardless -- the
@@ -756,38 +707,6 @@ class _BodyEmitter(CallDispatch, BodyWalker):
                                     getattr(self.model, "ctx", None),
                                     loop_vars=self.loop_vars)
         return self._types
-
-    def convert_to(self, e, target) -> str:
-        """*e* in an assignment-like context whose target type is *target*
-        (LRM 8.7.2): evaluated at the target's width if that is wider, then
-        truncated or extended to the target.
-
-        Anything that is not integer-to-integer renders as it stands: an enum,
-        a struct, a string, or a value this backend cannot type.
-        """
-        v = self._convert_val(e, target)
-        return self.expr(e) if v is None else v.text
-
-    def _convert_val(self, e, target) -> Optional[_Val]:
-        """`convert_to`, with the range of the result; ``None`` where the
-        conversion does not apply."""
-        s = self.types.type_of(e)
-        if target is None or target.kind != "int" or not is_integral(s):
-            return None
-        # The source is evaluated at least as wide as the target, so the
-        # target's wrap alone decides the value: a ring operator's result
-        # need not be wrapped to the source type first.
-        return self._fit(self._int_root(e, assign_source_type(target, s),
-                                        ring=True), target)
-
-    def converts_as_is(self, e, target) -> bool:
-        """Whether `convert_to(e, target)` is *e* rendered as it stands, known
-        WITHOUT rendering it. For the statements whose value may be a call
-        that must not be hoisted -- which it has to be, if it gets wrapped."""
-        s = self.types.type_of(e)
-        if target is None or target.kind != "int" or not is_integral(s):
-            return True
-        return _Val("", *int_range(s)).within(*int_range(target))
 
     def call_args(self, args, fn) -> List[str]:
         """Call arguments to *fn*, each converted to its parameter's declared
@@ -843,190 +762,6 @@ class _BodyEmitter(CallDispatch, BodyWalker):
                     f"evaluated in the caller's scope, not the callee's")
         return (self.convert_to(e, self.types.of_datatype(ann))
                 if ann is not None else self.expr(e))
-
-    def _int_root(self, e, final, ring: bool = False) -> _Val:
-        """*e*, evaluated at *final*: in range, or with *ring*, only right
-        modulo 2**N (see `_int_opnd`) for a caller that wraps it anyway."""
-        saved = self._final
-        self._final = {}
-        try:
-            self.types.propagate(e, final, self._final)
-            return self._int_opnd(e) if ring else self._int_val(e)
-        finally:
-            self._final = saved
-
-    def _int_compare(self, e) -> Optional[str]:
-        """A relational or equality operator over integers (8.5.2, Table 22):
-        both operands at the larger width, unsigned unless both are signed.
-        ``None`` if an operand is not an integer this backend can type."""
-        lt = self.types.type_of(e.lhs)
-        rt = self.types.type_of(e.rhs)
-        if not (is_integral(lt) and is_integral(rt)):
-            return None
-        if lt.kind == "enum" or rt.kind == "enum":
-            # Enum against enum compares items; there is nothing to convert.
-            return None
-        p = merge(lt, rt)
-        a = self._int_root(e.lhs, p)
-        b = self._int_root(e.rhs, p)
-        return f"{_br(a)} {_BINOP[e.op.name]} {_br(b)}"
-
-    def _fit(self, v: _Val, t) -> _Val:
-        """*v* brought into the range of *t*, if it may be outside it."""
-        lo, hi = int_range(t)
-        if v.const is not None:
-            c = convert(v.const, t)
-            return _const(c, hexa=c != v.const and c > 0xffff)
-        if v.within(lo, hi):
-            return v
-        if t.as_int().signed:
-            return _Val(f"_pss_sint({v.text}, {t.as_int().width})", lo, hi)
-        return _Val(f"{_br(v)} & 0x{hi:x}", lo, hi, atom=False)
-
-    def _int_val(self, e) -> _Val:
-        """*e* at its final type, in range."""
-        return self._fit(self._int_raw(e), self._final[id(e)])
-
-    def _int_opnd(self, e) -> _Val:
-        """*e* as the operand of a ring operator: left unwrapped if it is one
-        too, since the result is the same modulo 2**N (see `_RING_BIN`)."""
-        cn = _dt_name(e)
-        if ((cn == "ExprBin" and e.op.name in _RING_BIN)
-                or (cn == "ExprUnary" and e.op.name in CONTEXT_UNARY)):
-            return self._int_raw(e)
-        if (cn not in ("ExprBin", "ExprUnary", "ExprIfExp")
-                and self.types.type_of(e).as_int().width
-                >= self._final[id(e)].as_int().width):
-            # A primary no narrower than the operation: extending it changes
-            # no bit the operation keeps.
-            return self._int_leaf(e, ring=True)
-        return self._int_val(e)
-
-    def _int_self(self, e) -> _Val:
-        """A self-determined operand -- a shift amount, an exponent."""
-        if id(e) in self._final:
-            return self._int_val(e)
-        text = self.expr(e)
-        return _Val(text, None, None, atom=_atomic(text))
-
-    def _int_raw(self, e) -> _Val:
-        cn = _dt_name(e)
-        if cn == "ExprBin" and (e.op.name in CONTEXT_BINARY
-                                or e.op.name in LEFT_TYPED):
-            return self._int_bin(e)
-        if cn == "ExprUnary" and e.op.name in CONTEXT_UNARY:
-            return self._int_unary(e)
-        if cn == "ExprIfExp":
-            test = self.expr(e.test)
-            a, b = self._arms(e, self._int_val)
-            lo = hi = None
-            if None not in (a.lo, a.hi, b.lo, b.hi):
-                lo, hi = min(a.lo, b.lo), max(a.hi, b.hi)
-            return _Val(f"({_br(a)} if {test} else {_br(b)})", lo, hi)
-        return self._int_leaf(e)
-
-    def _int_leaf(self, e, ring: bool = False) -> _Val:
-        """A primary, converted to the type its context gives it (8.7.1):
-        sign-extended if that is signed, which a Python int already is, and
-        zero-extended if it is unsigned -- its own bit pattern, masked. With
-        *ring*, left as it is (see `_int_opnd`)."""
-        t = self._final[id(e)]
-        s = self.types.type_of(e).as_int()
-        v = getattr(e, "value", None) if _dt_name(e) == "ExprConstant" else None
-        if isinstance(v, int) and not isinstance(v, bool):
-            return _const(v if t.signed else v & ((1 << s.width) - 1))
-        if _dt_name(e) == "ExprCast":
-            # Its range is what the conversion produced, which is often much
-            # less than the whole of the cast type: `(bit[32])flag` is 0 or 1.
-            cv = self._convert_val(e.value,
-                                   self.types.of_datatype(e.target_type))
-            if cv is not None:
-                cv = dc.replace(cv, text=cv.text if cv.atom
-                                else f"({cv.text})", atom=True)
-                if not (s.signed and not t.signed and not ring) \
-                        or cv.nonneg():
-                    return cv
-        text = self.expr(e)
-        lo, hi = int_range(s)
-        if s.signed and not t.signed and not ring:
-            m = (1 << s.width) - 1
-            return _Val(f"{text if _atomic(text) else f'({text})'} & 0x{m:x}",
-                        0, m, atom=False)
-        return _Val(text, lo, hi, atom=_atomic(text))
-
-    def _int_unary(self, e) -> _Val:
-        a = self._int_opnd(e.operand)
-        op = e.op.name
-        if op == "UAdd":
-            return a
-        if op == "USub":
-            if a.const is not None:
-                return _const(-a.const)
-            lo = -a.hi if a.hi is not None else None
-            hi = -a.lo if a.lo is not None else None
-            return _Val(f"-{_br(a)}", lo, hi, atom=False)
-        if a.const is not None:
-            return _const(~a.const)
-        lo = -a.hi - 1 if a.hi is not None else None
-        hi = -a.lo - 1 if a.lo is not None else None
-        return _Val(f"~{_br(a)}", lo, hi, atom=False)
-
-    def _int_bin(self, e) -> _Val:
-        op = e.op.name
-        t = self._final[id(e)].as_int()
-        tlo, thi = int_range(t)
-        if op == "Exp":
-            return self._int_pow(e, t)
-        if op in _RING_BIN and op != "LShift":
-            a, b = self._int_opnd(e.lhs), self._int_opnd(e.rhs)
-        elif op == "LShift":
-            a, b = self._int_opnd(e.lhs), self._int_self(e.rhs)
-        elif op == "RShift":
-            a, b = self._int_val(e.lhs), self._int_self(e.rhs)
-        else:                                   # Div, Mod
-            a, b = self._int_val(e.lhs), self._int_val(e.rhs)
-        if a.const is not None and b.const is not None:
-            if op in ("Div", "Mod") and b.const == 0:
-                raise ValueError(
-                    f"in '{getattr(self.fn, 'name', '?')}': division by zero "
-                    f"in a constant expression (LRM 8.5.1)")
-            if op in ("LShift", "RShift") and b.const < 0:
-                raise ValueError(
-                    f"in '{getattr(self.fn, 'name', '?')}': a negative shift "
-                    f"amount (LRM 8.5.7)")
-            return _const(_FOLD[op](a.const, b.const))
-        lo = hi = None
-        if op == "Add" and None not in (a.lo, a.hi, b.lo, b.hi):
-            lo, hi = a.lo + b.lo, a.hi + b.hi
-        elif op == "Sub" and None not in (a.lo, a.hi, b.lo, b.hi):
-            lo, hi = a.lo - b.hi, a.hi - b.lo
-        elif op == "Mult":
-            lo, hi = _mul_range(a, b)
-        elif op in ("BitAnd", "BitOr", "BitXor"):
-            lo, hi = _bitwise_range(op, a, b, tlo, thi)
-        elif op == "LShift":
-            if b.const is not None and b.const >= 0 and None not in (a.lo, a.hi):
-                lo, hi = a.lo << b.const, a.hi << b.const
-        elif op == "RShift":
-            # `>>` of an in-range value stays in range; Python's is
-            # arithmetic on a negative one, which is 8.5.7's fill with ones.
-            lo, hi = min(a.lo, 0), max(a.hi, 0)
-            if b.const is not None and b.const >= 0:
-                lo, hi = a.lo >> b.const, a.hi >> b.const
-        else:                                   # Div, Mod
-            # |a / b| <= |a|, and a remainder has a's sign and at most its
-            # size -- so both stay in the type, but for the one quotient
-            # that cannot: the most negative value divided by -1.
-            lo, hi = min(a.lo, -a.hi, 0), max(a.hi, -a.lo, 0)
-            if op == "Mod":
-                lo, hi = min(a.lo, 0), max(a.hi, 0)
-            elif a.lo > tlo or b.lo > -1 or b.hi < -1:
-                lo, hi = max(lo, tlo), min(hi, thi)
-            if a.nonneg() and b.nonneg():
-                return _Val(f"{_br(a)} {_INT_PYOP[op]} {_br(b)}", lo, hi,
-                            atom=False)
-            return _Val(f"_pss_{op.lower()}({a.text}, {b.text})", lo, hi)
-        return _Val(f"{_br(a)} {_INT_PYOP[op]} {_br(b)}", lo, hi, atom=False)
 
     def _int_pow(self, e, t) -> _Val:
         """`a ** b` (8.5.1): the left operand's type; the exponent is

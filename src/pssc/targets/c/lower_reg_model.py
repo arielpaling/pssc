@@ -188,6 +188,8 @@ class _Acc:
     strides: List[int]   # one per array index parameter
     #: The handle member holding the base of the group the register is in.
     base_member: str = "base"
+    #: The register's value width (`write_val` converts to it, 21.14.1).
+    value_bits: int = 32
 
 
 def _collect_accessors(root_dtype, prefix: str, style=None) -> List[_Acc]:
@@ -208,6 +210,7 @@ def _collect_accessors(root_dtype, prefix: str, style=None) -> List[_Acc]:
             const_off=a.const_off,
             strides=list(a.strides),
             base_member=_style(style).group_base(a.segs[0]),
+            value_bits=a.value_bits,
         )
         for a in collect_accessors(root_dtype)
     ]

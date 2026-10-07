@@ -355,7 +355,7 @@ def test_write_field_folds_to_a_masked_write(c):
     that silently returned 0 would produce `_write_masked(0, 0)` -- a
     read-modify-write that changes nothing and reports success.
     """
-    assert "wb_dma_ch_regs_csr_write_masked(s, 64, ((uint32_t)(enable) & 1) << 6);" in c
+    assert "wb_dma_ch_regs_csr_write_masked(s, 64, ((uint32_t)enable & 1) << 6);" in c
 
 
 def test_each_write_field_is_its_own_read_modify_write(c):

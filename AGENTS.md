@@ -124,6 +124,42 @@ forever. Two backends folding offsets two ways is the worst duplication
 available here. If you need something the walk does not carry, add it to
 `RegAccessor`; do not re-walk.
 
+Each register GROUP has its own base: `set_handle` binds one group, so C
+keeps one handle member per group (`CStylePolicy.group_base`, `base_<group>`),
+as Python and C++ do. A group that no `set_handle` reaches is refused on every
+target (`targets/group_binding.py`); the one exception is a component with a
+single group whose constructor binds none, which binds it to the
+constructor's first address parameter.
+
+Offsets come from RUNNING the group's `get_offset_of_instance[_array]` for
+each instance name (`progseq_model._OffsetEval`): `if` chains and `match`
+both work. Anything it cannot evaluate, and the -1 sentinel for a declared
+register, is a `CompileError` raised before any file is written -- never a
+fallback to the dense `offset_map`.
+
+## Integers are PSS-wide
+
+Every integer operation in a generated body is carried out at its PSS width
+and signedness (LRM 8.7; user ruling, 2026-10-07), not the host language's.
+`targets/int_semantics.py` (`IntSemantics`) decides where a value is widened,
+wrapped or sign-extended, from each value's known range, and a backend only
+spells it: Python (`py/lower_progseq.py`) and C/C++ (`CIntSemantics` in
+`c/lower_progseq.py`) share the decisions. C's two traps are integer
+promotion (`~` of a `uint8_t` is negative) and 32-bit evaluation in a 64-bit
+context; `_c_carrier` widens an operand before the operation. Call arguments
+and assignments are assignment-like contexts (8.7.2): the target width
+propagates INTO the expression, so `write_val(~x)` with `bit x = 1` is
+`0xFFFFFFFE`, and that is correct.
+
+A subscript of an integer is a bit or part select, decided once from
+`ExprTypes` (`targets/bit_select.py`); every emitter renders it, read and
+read-modify-write.
+
+`tests/progseq/test_op_model_construct_matrix.py` holds these constructs to
+ONE hand-written trace on all four op-model targets (`trace_harness.py`
+builds and runs C, C++, Python and SV). A case a target cannot handle yet is
+a strict xfail naming its defect.
+
 ## The Python backend
 
 `op-model-py` (`targets/py/`, `targets/py_progseq_tgt.py`) generates ONE module:

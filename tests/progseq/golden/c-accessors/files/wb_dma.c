@@ -499,11 +499,11 @@ void wb_dma_ch_configure_channel(wb_dma_ch_t *s, wb_dma_ch_cfg_t cfg) {
      * configuration write.
      */
     wb_dma_csr_t_ch_en_set(&csr, 0);
-    wb_dma_csr_t_src_sel_set(&csr, (uint8_t)(cfg.src_if));
-    wb_dma_csr_t_dst_sel_set(&csr, (uint8_t)(cfg.dst_if));
+    wb_dma_csr_t_src_sel_set(&csr, (cfg.src_if & 0x1));
+    wb_dma_csr_t_dst_sel_set(&csr, (cfg.dst_if & 0x1));
     wb_dma_csr_t_inc_src_set(&csr, cfg.inc_src);
     wb_dma_csr_t_inc_dst_set(&csr, cfg.inc_dst);
-    wb_dma_csr_t_mode_set(&csr, (uint8_t)(cfg.mode));
+    wb_dma_csr_t_mode_set(&csr, (cfg.mode & 0x1));
     wb_dma_csr_t_prio_set(&csr, cfg.prio);
     wb_dma_csr_t_sz_wb_set(&csr, cfg.sz_wb);
     /*
@@ -596,7 +596,7 @@ void wb_dma_ch_set_auto_restart(wb_dma_ch_t *s, uint8_t enable) {
     if (!(s->caps.ars)) {
         return;
     }
-    wb_dma_ch_regs_csr_write_masked(s, 64, ((uint32_t)(enable) & 1) << 6);
+    wb_dma_ch_regs_csr_write_masked(s, 64, ((uint32_t)enable & 1) << 6);
 }
 
 /*
@@ -728,7 +728,7 @@ void wb_dma_ch_transfer_list_start(wb_dma_ch_t *s, pssc_addr_t head) {
      * descriptors from interface 0 regardless of which interface the data
      * moves on, so `head` must be IF0-reachable.
      */
-    wb_dma_ch_regs_desc_write_val(s, (uint32_t)(head));
+    wb_dma_ch_regs_desc_write_val(s, (head & 0xffffffffu));
     /*
      * Steps 3 and 4, in that order and as TWO WRITES, deliberately: the
      * device requires them separate, and write_fields({"use_ed","ch_en"},
@@ -946,7 +946,7 @@ void wb_dma_pause_engine(wb_dma_t *s, uint8_t pause) {
 uint16_t wb_dma_read_descriptor_residual(wb_dma_t *s, pssc_addr_t desc_ptr) {
     uint32_t desc_csr;
     desc_csr = pssc_r32(pssc_bus(s), desc_ptr);
-    return (uint16_t)(desc_csr);
+    return (desc_csr & 0xfff);
 }
 
 /*
@@ -986,12 +986,12 @@ pssc_addr_t wb_dma_write_descriptor(wb_dma_t *s, pssc_addr_t at, pssc_addr_t pre
      * addr_reg_pkg ("TODO: generic type"). wb_dma_desc_s already declares
      * the packed layout, so nothing here adds information.
      */
-    csr_word = (uint32_t)(wb_dma_desc_t_csr_get(d).tot_sz);
-    csr_word |= (uint32_t)(wb_dma_desc_t_csr_get(d).dst_sel) << 16;
-    csr_word |= (uint32_t)(wb_dma_desc_t_csr_get(d).src_sel) << 17;
-    csr_word |= (uint32_t)(wb_dma_desc_t_csr_get(d).inc_dst) << 18;
-    csr_word |= (uint32_t)(wb_dma_desc_t_csr_get(d).inc_src) << 19;
-    csr_word |= (uint32_t)(wb_dma_desc_t_csr_get(d).eol) << 20;
+    csr_word = wb_dma_desc_t_csr_get(d).tot_sz;
+    csr_word |= (uint32_t)wb_dma_desc_t_csr_get(d).dst_sel << 16;
+    csr_word |= (uint32_t)wb_dma_desc_t_csr_get(d).src_sel << 17;
+    csr_word |= (uint32_t)wb_dma_desc_t_csr_get(d).inc_dst << 18;
+    csr_word |= (uint32_t)wb_dma_desc_t_csr_get(d).inc_src << 19;
+    csr_word |= (uint32_t)wb_dma_desc_t_csr_get(d).eol << 20;
     pssc_w32(pssc_bus(s), at, csr_word);
     pssc_w32(pssc_bus(s), (at + 4), wb_dma_desc_t_adr0_get(d));
     pssc_w32(pssc_bus(s), (at + 8), wb_dma_desc_t_adr1_get(d));
@@ -1001,7 +1001,7 @@ pssc_addr_t wb_dma_write_descriptor(wb_dma_t *s, pssc_addr_t at, pssc_addr_t pre
      * handle comparison, because an address handle is opaque and not
      * usefully comparable.
      */
-    if (prev != 0) {
+    if (prev != 0ull) {
         pssc_w32(pssc_bus(s), (prev + 12), (uint32_t)(at));
     }
     return (at + 16);

@@ -372,7 +372,7 @@ walk needs:
 
 ```python
 # src/pssc/targets/py/lower_progseq.py
-class _BodyEmitter(CallDispatch, BodyWalker):
+class _BodyEmitter(IntSemantics, CallDispatch, BodyWalker):
 ```
 
 The walker owns statement dispatch, nesting, comment propagation, the
@@ -381,6 +381,14 @@ define a hook named after each IR node class (`StmtAnnAssign` →
 `stmt_ann_assign`, `ExprRefBottomUp` → `expr_ref_bottom_up`) and the walk finds
 it. A node with no hook is a loud error, never text copied through — which is
 the defect the legality work exists to eliminate.
+
+`IntSemantics` (`targets/int_semantics.py`) is the third mixin, and the one to
+take if your language's integers do not carry PSS widths -- few do. PSS carries
+every integer operation out at a width and signedness (LRM 8.7); the mixin
+decides where a value must be widened, wrapped or sign-extended, from what it
+can prove about each value's range, and asks you only how to spell each of
+those (`int_mask_text`, `int_sint_text`, `int_const`, ...). Python and C share
+it, which is why `(~p) == q` over `bit[4]` means the same in both.
 
 `CallDispatch` routes each call by its `Disposition` from the legality registry
 (`call_reg`, `call_mem`, `call_channel`, `call_model_op`, `call_utility`, …), so

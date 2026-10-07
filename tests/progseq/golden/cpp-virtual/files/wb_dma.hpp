@@ -1096,11 +1096,11 @@ public:
         // CH_EN is what arms the channel, so it must not ride along with the
         // configuration write.
         csr.ch_en = 0;
-        csr.src_sel = static_cast<bool>(cfg.src_if);
-        csr.dst_sel = static_cast<bool>(cfg.dst_if);
+        csr.src_sel = (cfg.src_if & 0x1);
+        csr.dst_sel = (cfg.dst_if & 0x1);
         csr.inc_src = cfg.inc_src;
         csr.inc_dst = cfg.inc_dst;
-        csr.mode = static_cast<bool>(cfg.mode);
+        csr.mode = (cfg.mode & 0x1);
         csr.prio = cfg.prio;
         csr.sz_wb = cfg.sz_wb;
         // Capability-gated. Hardware silently ignores these on a channel built
@@ -1317,7 +1317,7 @@ public:
         // Step 1: point the channel at the head of the list. The DMA fetches
         // descriptors from interface 0 regardless of which interface the data
         // moves on, so `head` must be IF0-reachable.
-        this->regs.desc.write_val(static_cast<std::uint32_t>(head));
+        this->regs.desc.write_val((head & 0xffffffffu));
         // Steps 3 and 4, in that order and as TWO WRITES, deliberately: the
         // device requires them separate, and write_fields({"use_ed","ch_en"},
         // {1,1}) would coalesce them into one bus read-modify-write -- that is
@@ -1554,7 +1554,7 @@ public:
     std::uint16_t read_descriptor_residual(pssc::addr_t desc_ptr) override {
         std::uint32_t desc_csr{};
         desc_csr = this->imp_.read32(desc_ptr);
-        return static_cast<std::uint16_t>(desc_csr);
+        return (desc_csr & 0xfff);
     }
 
     /**
@@ -1590,7 +1590,7 @@ public:
         // write_struct land; they are commented out of the front end's
         // addr_reg_pkg ("TODO: generic type"). wb_dma_desc_s already declares
         // the packed layout, so nothing here adds information.
-        csr_word = static_cast<std::uint32_t>(d.csr.tot_sz);
+        csr_word = d.csr.tot_sz;
         csr_word |= static_cast<std::uint32_t>(d.csr.dst_sel) << 16;
         csr_word |= static_cast<std::uint32_t>(d.csr.src_sel) << 17;
         csr_word |= static_cast<std::uint32_t>(d.csr.inc_dst) << 18;
@@ -1603,7 +1603,7 @@ public:
         // Extend the list. The check is on the resolved address rather than a
         // handle comparison, because an address handle is opaque and not
         // usefully comparable.
-        if (prev != 0) {
+        if (prev != 0ull) {
             this->imp_.write32((prev + 12), static_cast<std::uint32_t>(at));
         }
         return (at + 16);

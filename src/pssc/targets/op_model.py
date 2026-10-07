@@ -630,16 +630,9 @@ class OpModelTarget(Target):
         # `func_kind(fn)` on one function -- for which the ambient value is
         # still the fallback. Nothing in a generated file depends on it.
         with pm.ctor_names_scope(getattr(opts, "progseq_ctor_name", None)):
-            try:
-                model = self.build_model(ctx, opts)
-                self.check(model)
-                outputs = list(self.emit(model, opts))
-            except pm.OffsetFoldError as e:
-                # The model's offset function, not the backend: a user error.
-                # `check_register_offsets` catches it before any file is
-                # written; this catches an offset a body asks for itself.
-                from ..driver import CompileError
-                raise CompileError(str(e)) from None
+            model = self.build_model(ctx, opts)
+            self.check(model)
+            outputs = list(self.emit(model, opts))
             return outputs + self.emit_manifest(model, opts, outputs)
 
     def emit_manifest(self, model: OpModel, opts: argparse.Namespace,

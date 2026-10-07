@@ -84,8 +84,6 @@ class Case(NamedTuple):
     xfail: Dict[str, str] = {}           # target -> defect it is waiting on
 
 
-_D9 = "D9: evaluated at the host language's width, not PSS's"
-_D9_BOOL = "D9: op-model-cpp renders `bit` as bool, and `~` on a bool is an error"
 
 _ALL = ("c", "cpp", "py", "sv")
 
@@ -454,8 +452,7 @@ component pss_top {""" + _ONE + """
     if ((~p) == q) { a.STS.write_val(1); } else { a.STS.write_val(2); }
   }
   target function void run() { go(15, 0); go(0, 15); go(1, 1); }
-}""", ["write 32 0x1004 0x1", "write 32 0x1004 0x1", "write 32 0x1004 0x2"],
-        xfail=_on(["c", "cpp"], _D9)),
+}""", ["write 32 0x1004 0x1", "write 32 0x1004 0x1", "write 32 0x1004 0x2"]),
 
     # The 64-bit parameter width propagates to x BEFORE the inversion.
     "~ in a context wider than its operand": Case("""
@@ -464,7 +461,7 @@ component pss_top {
   solve function void initialize(addr_handle_t base) { a.set_handle(base); }
   target function void go(bit[32] x) { a.W.write_val(~x); }
   target function void run() { go(1); }
-}""", ["write 64 0x1000 0xfffffffffffffffe"], xfail=_on(["c", "cpp"], _D9)),
+}""", ["write 64 0x1000 0xfffffffffffffffe"]),
 
     # The case as originally reported: 0xFFFFFFFE is RIGHT (8.7.2, Table 23),
     # not 0. Pinned so nobody "fixes" it to the operand's width.
@@ -472,8 +469,39 @@ component pss_top {
 component pss_top {""" + _ONE + """
   target function void go(bit x) { a.STS.write_val(~x); }
   target function void run() { go(1); go(0); }
-}""", ["write 32 0x1004 0xfffffffe", "write 32 0x1004 0xffffffff"],
-        xfail=_on(["cpp"], _D9_BOOL)),
+}""", ["write 32 0x1004 0xfffffffe", "write 32 0x1004 0xffffffff"]),
+
+    # A `bit[4]` holds 0..15: 15 + 1 is 0, whatever C type stores it.
+    "a narrow local wraps at its own width": Case("""
+component pss_top {""" + _ONE + """
+  target function void run() {
+    bit[4] n = 15;
+    n = n + 1;
+    a.STS.write_val(n);
+    n += 15;
+    a.STS.write_val(n);
+  }
+}""", ["write 32 0x1004 0x0", "write 32 0x1004 0xf"]),
+
+    # `int[8]` 127 + 1 is -128, sign-extended into the 32-bit parameter.
+    "a narrow signed value overflows to negative": Case("""
+component pss_top {""" + _ONE + """
+  target function void run() {
+    int[8] v = 127;
+    v = v + 1;
+    a.STS.write_val(v);
+  }
+}""", ["write 32 0x1004 0xffffff80"]),
+
+    # PSS `/` and `%` truncate toward zero (8.5.1): -7 / 2 is -3, -7 % 2 is -1.
+    "signed division truncates toward zero": Case("""
+component pss_top {""" + _ONE + """
+  target function void go(int x) {
+    a.STS.write_val(x / 2);
+    a.STS.write_val(x % 2);
+  }
+  target function void run() { go(-7); }
+}""", ["write 32 0x1004 0xfffffffd", "write 32 0x1004 0xffffffff"]),
 
     # The assignment propagates 8 bits to `(~x) >> 1` and so to x: 0x01 ->
     # 0xFE -> 0x7F. In int it is -2 >> 1 = -1 -> 0xFF; at x's own 4 bits
@@ -485,7 +513,7 @@ component pss_top {""" + _ONE + """
     a.STS.write_val(y);
   }
   target function void run() { go(1); }
-}""", ["write 32 0x1004 0x7f"], xfail=_on(["c", "cpp"], _D9)),
+}""", ["write 32 0x1004 0x7f"]),
 }
 
 

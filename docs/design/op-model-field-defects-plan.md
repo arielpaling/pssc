@@ -1,6 +1,6 @@
 # Op-model defects from a field device-init model: test and fix plan
 
-Status: **plan, decisions recorded** (2026-10-07). Source: an external report with nine minimal
+Status: **done** (2026-10-07); open follow-ups in section 0. Source: an external report with nine minimal
 repros (D1-D9), found while generating a device-initialization operation model
 at pssc `6def361`. This plan re-runs every repro against the current tree
 (`ce70ec7`), on all four op-model targets rather than the two in the report,
@@ -22,7 +22,9 @@ from the model that found it.
 | F4 (D4): one pattern reading (`body_walker.match_values`) | done |
 | F7 (D7): `?:` in C and C++ | done |
 | F2 (D2): C calls a sub-component's operation on its handle; a register path through sub-components in C, C++ and Python | done |
-| F9 (D9) | open |
+| F9 (D9): Python's integer machinery moved to `int_semantics.py`; C and C++ use it (`CIntSemantics`) | done |
+
+All nine defects are fixed; the construct matrix has no xfail left.
 
 Found on the way:
 
@@ -30,6 +32,14 @@ Found on the way:
   its constant. What C, C++ and Python could not lower was the `default:` arm
   (a wildcard `PatternAs`), so ANY `match` with a `default:` failed on all
   three. corpus `types.enum.match.001` now passes on op-model-py.
+* **F9 also corrected the shipped example model's C and C++.** These were
+  silent before, so the golden diff was reviewed line by line:
+  * `read_descriptor_residual` returns `bit[12]` but returned 16 bits
+    (`(uint16_t)desc_csr`); it now masks to 12.
+  * C++ converted `bit` with `static_cast<bool>(v)`, which maps 2 to true;
+    PSS truncation keeps bit 0 (`v & 0x1`).
+  * Every other change is equivalent in value: a cast written as a mask, or a
+    64-bit literal suffix.
 * **C and C++ cannot lower `repeat (i : N)`** (`StmtFor`: "defines no
   stmt_for()"). Not in the report; not yet scheduled.
 * **C, from running the inheritance cases (`test_op_model_inherit_native`)

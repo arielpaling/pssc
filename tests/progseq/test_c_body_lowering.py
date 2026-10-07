@@ -120,6 +120,7 @@ component probe_c {
         if (!b) {
             m = -x;
         }
+        m = ~(x & m);
         return m;
     }
 }
@@ -128,16 +129,18 @@ component probe_c {
 
 def test_unary_operators(tmp_path):
     _, impl, _ = _generate(tmp_path, _UNARY)
-    assert_c(impl, has=["~(x)", "!(b)", "-(x)"])
+    assert_c(impl, has=["m = ~x;", "!(b)", "m = -x;"])
 
 
 def test_unary_operand_is_bracketed(tmp_path):
     """`~0` reaching the compiler as `~0` and not as something precedence
     rearranged is the whole point -- pssparser defect D5 already ate a `~` once
     (`write_masked({.ch_en=~0}, ...)` selected no bits), and the mask that
-    produced was a write that did nothing."""
+    produced was a write that did nothing.
+
+    A NAME needs no bracket (`~x`); a compound operand does, and keeps it."""
     _, impl, _ = _generate(tmp_path, _UNARY)
-    assert_c(impl, has_not=["~x;", "!b)", "-x;"])
+    assert_c(impl, has=["~(x & m)"], has_not=["~x & m", "!b)"])
 
 
 @needs_cc

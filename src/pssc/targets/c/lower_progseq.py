@@ -24,6 +24,8 @@ from __future__ import annotations
 import dataclasses as dc
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Set
 
+import zuspec.ir.core as ir
+
 from ..progseq_model import (
     func_kind, FuncKind, field_is_reg_group, _dt_name, CompKind,
     sub_components, channel_fields, array_base_stride, scalar_offset,
@@ -37,6 +39,9 @@ from ..body_walker import (BodyWalker, CallDispatch, match_values,
                            scan_write_only)
 from ..bit_select import bit_select
 from ..call_legality import Ctx
+from ..expr_types import (CONTEXT_BINARY, CONTEXT_UNARY, LEFT_TYPED,
+                          RELATIONAL, PssType, assign_source_type, is_integral)
+from ..int_semantics import IntSemantics, _Val, _br
 from .. import group_binding
 from ..group_binding import group_fields
 from ..comments import BLOCK, blank_line, comment_lines, doc_block
@@ -113,6 +118,76 @@ def c_select_write(sel, render, value, where: str) -> str:
 def _select_lo(sel, render) -> str:
     return (str(sel.lo_const) if sel.lo_const is not None
             else f"({render(sel.lo)})")
+
+
+def _c_store_exact(t) -> bool:
+    """Whether storing into the C (and C++) type of PSS integer type *t*
+    converts exactly as PSS does (8.7.2): modulo 2**N into an N-bit type.
+
+    `bit[N]` is stored as `uintK_t`, exact when N is K; `int[N]` as `int` up
+    to 32 bits (`int64_t` beyond), so only `int[32]` and `int[64]` are. A
+    C++ `bool` (`bit`) is never: it maps 2 to true, where PSS keeps bit 0."""
+    if t.signed:
+        return t.width in (32, 64)
+    return t.width in (8, 16, 32, 64)
+
+
+def _c_carrier(s, t) -> Optional[str]:
+    """The C type an operand of PSS type *s* is cast to before an operation
+    carried out at *t*, or ``None`` if C's own conversions already do it.
+
+    * Into the 64-bit carrier where *t* is wider than 32 bits: C would carry
+      the operation out at 32 bits otherwise, and only then widen.
+    * Into `uint32_t` for an unsigned operation wider than 16 bits on an
+      operand C would promote to a SIGNED `int` (anything narrower than 32
+      bits, a bitfield included): in `int`, `x << 31` is undefined and
+      `x * y` can overflow; in `uint32_t` both are PSS's modular result.
+    """
+    if t.width > 32 and s.width <= 32:
+        return "int64_t" if t.signed else "uint64_t"
+    if not t.signed and 16 < t.width <= 32 and s.width < 32:
+        return "uint32_t"
+    return None
+
+
+def _c_atomic(text: str) -> bool:
+    """Whether C *text* can be an operand as it stands: a name, a call, a
+    member or element chain, a cast of one, a non-negative number, or
+    bracketed whole."""
+    if not text or text[0] in "-~!&*":
+        return False
+    depth = 0
+    quote = None
+    escaped = False
+    for c in text.replace("->", "."):
+        if quote:
+            if escaped:
+                escaped = False
+            elif c == "\\":
+                escaped = True
+            elif c == quote:
+                quote = None
+        elif c in "'\"":
+            quote = c
+        elif c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+        elif depth == 0 and c in " +-*/%&|^<>=!~,?:":
+            return False
+    return True
+
+
+def _c_unbracket(text: str) -> str:
+    """*text* without the one pair of brackets that encloses all of it."""
+    if text.startswith("(") and text.endswith(")"):
+        depth = 0
+        for i, c in enumerate(text):
+            depth += c == "("
+            depth -= c == ")"
+            if depth == 0:
+                return text[1:-1] if i == len(text) - 1 else text
+    return text
 
 
 def _has_call(e) -> bool:
@@ -791,7 +866,141 @@ def _builtin_name(func) -> Optional[str]:
     return None
 
 
-class _BodyEmitter(CallDispatch, BodyWalker):
+class CIntSemantics(IntSemantics):
+    """`IntSemantics` spelled in C -- and in C++, whose integer rules are C's.
+
+    Every operation is carried out at its PSS type (8.7). C's own types are
+    the trap twice over: an operand narrower than `int` is PROMOTED to a
+    signed `int` before any operator sees it (`~` of a `uint8_t` 1 is -2,
+    and `(~p) == q` over `bit[4]` compares ints), and an operation on two
+    `uint32_t`s is carried out in 32 bits however wide its context (a
+    `bit[32]` inverted for a 64-bit register loses its upper half). So an
+    operand is widened to the carrier its PSS type needs (`_c_carrier`), and
+    a result is wrapped back into range where it may have left it.
+
+    The emitter supplies `expr`, `types`, `fn`, and `_final` (a dict).
+    """
+
+    def int_type_name(self, ct: str) -> str:
+        """A fixed-width integer type's spelling (`uint32_t`)."""
+        return ct
+
+    def int_cast_type(self, dtype) -> str:
+        """The type a cast the model wrote is spelled as."""
+        return c_type(dtype)
+
+    def int_cast_text(self, ct: str, text: str, atom: bool) -> str:
+        """*text* converted to the type spelled *ct*."""
+        return f"({ct}){text if atom else f'({text})'}"
+
+    def int_atomic(self, text: str) -> bool:
+        return _c_atomic(text)
+
+    def int_const(self, c: int, t, hexa: bool = False) -> _Val:
+        t = t.as_int() if t is not None else None
+        wide = t is not None and t.width > 32
+        if c < 0:
+            if c == -(1 << 63):
+                text = "(-9223372036854775807ll - 1)"
+            elif c == -(1 << 31) and not wide:
+                text = "(-2147483647 - 1)"
+            else:
+                text = f"{c}ll" if wide else str(c)
+            return _Val(text, c, c, atom=text.startswith("("), const=c)
+        text = f"0x{c:x}" if hexa else str(c)
+        if wide:
+            text += "ll" if t.signed else "ull"
+        elif c > 0x7fffffff:
+            text += "u"
+        return _Val(text, c, c, atom=True, const=c)
+
+    def int_mask_text(self, v: _Val, hi: int) -> str:
+        return f"{_br(v)} & {_c_int_literal(hi, 0)}"
+
+    def int_sint_text(self, v: _Val, width: int) -> str:
+        # Two's complement into a signed type is modular in every compiler
+        # this targets (and C23 makes it so); `>>` of a negative value is
+        # arithmetic in the same ones.
+        cw = 32 if width <= 32 else 64
+        sh = cw - width
+        it = self.int_type_name(f"int{cw}_t")
+        ut = self.int_type_name(f"uint{cw}_t")
+        if sh == 0:
+            return f"(({it})({ut})({v.text}))"
+        return f"(({it})(({ut})({v.text}) << {sh}) >> {sh})"
+
+    def int_ternary_text(self, test: str, a: _Val, b: _Val) -> str:
+        return f"(({test}) ? {_br(a)} : {_br(b)})"
+
+    def int_binop_text(self, op: str, a: _Val, b: _Val) -> str:
+        return f"{_br(a)} {_BINOP[op]} {_br(b)}"
+
+    def int_signed_div_text(self, op: str, a: _Val, b: _Val) -> str:
+        # C's `/` and `%` truncate toward zero, which is PSS's (8.5.1).
+        return f"({_br(a)} {_BINOP[op]} {_br(b)})"
+
+    def int_cmp_text(self, op: str, a: _Val, b: _Val) -> str:
+        return f"{_br(a)} {_BINOP[op]} {_br(b)}"
+
+    def int_leaf_text(self, e, s, t) -> str:
+        """A primary, in the C type its operation is carried out in
+        (`_c_carrier`). The whole expression is left as it is: C converts it
+        to its target -- an assignment, an argument, a comparison's other
+        side -- with nothing in between to overflow."""
+        text = self.expr(e)
+        if e is getattr(self, "_int_root_e", None):
+            return text
+        ct = _c_carrier(s, t.as_int())
+        if ct is not None:
+            return self.int_cast_text(self.int_type_name(ct), text,
+                                      _c_atomic(text))
+        return text
+
+    def _int_leaf(self, e, ring: bool = False) -> _Val:
+        """A cast the model wrote, as an OPERAND, keeps its C type: the shared
+        rule folds `(bit[32])f` into the converted value of `f`, which is
+        right about the value and wrong about C's type for it -- a one-bit
+        field is promoted to `int`, and `<< 31` on an `int` is undefined."""
+        v = IntSemantics._int_leaf(self, e, ring)
+        if _dt_name(e) != "ExprCast" or v.const is not None \
+                or e is getattr(self, "_int_root_e", None):
+            return v
+        own = self.types.type_of(e)
+        own = own.as_int() if is_integral(own) else None
+        ct = _c_carrier(PssType("int", 1, False), self._final[id(e)].as_int())
+        if ct is not None:
+            ct = self.int_type_name(ct)
+        elif own is not None and own.width > 16:
+            ct = self.int_cast_type(e.target_type)
+        if ct is None:
+            return v
+        return dc.replace(v, text=self.int_cast_text(ct, v.text, v.atom),
+                          atom=True)
+
+    def _int_root(self, e, final, ring: bool = False) -> _Val:
+        saved = getattr(self, "_int_root_e", None)
+        self._int_root_e = e
+        try:
+            return IntSemantics._int_root(self, e, final, ring)
+        finally:
+            self._int_root_e = saved
+
+    def convert_to(self, e, target) -> str:
+        """*e* in an assignment-like context whose target type is *target*
+        (8.7.2). Where the C store holds exactly the target's width -- a
+        `uint32_t` for a `bit[32]` (`_c_store_exact`) -- the store itself is
+        the conversion, so only the evaluation width is the source's
+        concern."""
+        s = self.types.type_of(e)
+        if target is None or target.kind != "int" or not is_integral(s):
+            return self.expr(e)
+        if _c_store_exact(target.as_int()):
+            return self._int_root(e, assign_source_type(target, s),
+                                  ring=True).text
+        return IntSemantics.convert_to(self, e, target)
+
+
+class _BodyEmitter(CIntSemantics, CallDispatch, BodyWalker):
     """Translate one operation body to C lines.
 
     The walk, the comment attachment and the two scans are
@@ -815,8 +1024,13 @@ class _BodyEmitter(CallDispatch, BodyWalker):
                  message_style: str = "import", handle: str = "s",
                  prefixes=None, link_style: str = "vtable", imports=None,
                  mem: MemAccess = None, style=None, accs=None,
-                 ctor_names=None, reg_map: bool = False):
+                 ctor_names=None, reg_map: bool = False, ctx=None):
         self.fn = fn
+        #: The compile context, for `ExprTypes` (the type map, and the
+        #: functions a call's result type comes from).
+        self.ctx = ctx
+        #: `IntSemantics`' per-root final types.
+        self._final = {}
         #: Address registers by following the layout struct. See `_reg_path`.
         self.reg_map = reg_map
         #: This compile's constructor names, for the one call site that has
@@ -1011,7 +1225,11 @@ class _BodyEmitter(CallDispatch, BodyWalker):
         idx = [c[1] for c in chain if c[1] is not None]
         base = accessor_base(prefix, segs, reg, self.style)
         idx_args = "".join(f", {self.expr(i)}" for i in idx)
-        args = [self.expr(a) for a in call.args]
+        # A value written is converted to the register's width, like any
+        # argument to a `bit[N]` parameter; a value struct is passed whole.
+        acc = self.accs.get(base)
+        val_t = PssType("int", acc.value_bits if acc else 32, False)
+        args = [self.convert_to(a, val_t) for a in call.args]
 
         if func.attr in _REG_ACCESSORS:
             want = _REG_ACCESSORS[func.attr]
@@ -1201,7 +1419,7 @@ class _BodyEmitter(CallDispatch, BodyWalker):
         """Static PSS types of this body's expressions (`ExprTypes`)."""
         if getattr(self, "_types", None) is None:
             from ..expr_types import ExprTypes
-            self._types = ExprTypes(self.fn, self.comp)
+            self._types = ExprTypes(self.fn, self.comp, self.ctx)
         return self._types
 
     def expr_subscript(self, e) -> str:
@@ -1215,19 +1433,34 @@ class _BodyEmitter(CallDispatch, BodyWalker):
                               getattr(self.fn, "name", "?"))
 
     def expr_bin(self, e) -> str:
-        op = _BINOP.get(e.op.name)
-        if op is None:
-            raise ValueError(f"unsupported binop {e.op.name}")
-        return f"{self._operand(e.lhs)} {op} {self._operand(e.rhs)}"
+        op = e.op.name
+        if op in RELATIONAL:
+            text = self._int_compare(e)
+            if text is not None:
+                return text
+        elif op in CONTEXT_BINARY or op in LEFT_TYPED:
+            t = self.types.type_of(e)
+            if is_integral(t):
+                return self._int_root(e, t.as_int()).text
+        cop = _BINOP.get(op)
+        if cop is None:
+            raise ValueError(f"unsupported binop {op}")
+        return f"{self._operand(e.lhs)} {cop} {self._operand(e.rhs)}"
 
     def expr_cast(self, e) -> str:
-        # `(bit[32])x` -> `(uint32_t)x`. C widens implicitly where SV does
-        # not, so this is mostly redundant here -- but dropping a cast the
-        # model wrote is not this emitter's call to make, and the masked
-        # register writes now emit one to state the register's width.
-        return f"({c_type(e.target_type)})({self.expr(e.value)})"
+        # `(bit[32])x` -> `(uint32_t)x`. A cast is an assignment-like context
+        # (8.7.2): the value is converted to the target's width, which a C
+        # cast alone does only when that width is a C type's -- `(bit[4])x`
+        # keeps four bits, not eight. Dropping a cast the model wrote is not
+        # this emitter's call to make, so the C type is stated as well.
+        target = self.types.of_datatype(e.target_type)
+        return f"({c_type(e.target_type)})({self.convert_to(e.value, target)})"
 
     def expr_unary(self, e) -> str:
+        if e.op.name in CONTEXT_UNARY:
+            t = self.types.type_of(e)
+            if is_integral(t):
+                return self._int_root(e, t.as_int()).text
         op = _UNOP.get(e.op.name)
         if op is None:
             raise ValueError(f"unsupported unary op {e.op.name}")
@@ -1239,8 +1472,23 @@ class _BodyEmitter(CallDispatch, BodyWalker):
     def expr_if_exp(self, e) -> str:
         """`c ? a : b` (8.5.6). Each arm is evaluated only if chosen, which C's
         own `?:` guarantees, so an arm that reads a register stays one."""
+        t = self.types.type_of(e)
+        if t is not None and t.kind == "int":
+            return self._int_root(e, t).text
         return (f"(({self.expr(e.test)}) ? ({self.expr(e.body)}) : "
                 f"({self.expr(e.orelse)}))")
+
+    def _c_args(self, args, fn) -> List[str]:
+        """Call arguments, each converted to its parameter's declared type
+        (8.7.2, "function call parameters")."""
+        params = list(getattr(getattr(fn, "args", None), "args", None) or ())
+        out = []
+        for i, a in enumerate(args):
+            ann = getattr(params[i], "annotation", None) \
+                if i < len(params) else None
+            out.append(self.convert_to(a, self.types.of_datatype(ann))
+                       if ann is not None else self.expr(a))
+        return out
 
     # -- calls, one hook per Disposition -------------------------------------
     #
@@ -1367,12 +1615,15 @@ class _BodyEmitter(CallDispatch, BodyWalker):
         func = call.func
         args = [self.expr(a) for a in call.args]
         name = None
+        own = {f.name: f for f in getattr(self.comp, "functions", []) or []}
         if _dt_name(func) == "ExprRefUnresolved":
             name = func.name
         elif _dt_name(func) == "ExprAttribute" and \
                 _dt_name(func.value) == "TypeExprRefSelf":
             name = func.attr
         if name is not None and name in self.model_ops:
+            if name in own:
+                args = self._c_args(call.args, own[name])
             return f"{self.style.symbol(self.prefix, mangle(name))}(" + \
                    ", ".join([self.h] + args) + ")"
         # `s.poke()` / `ch[i].status()`: an operation of a sub-component, on
@@ -1382,8 +1633,10 @@ class _BodyEmitter(CallDispatch, BodyWalker):
                  if _dt_name(func) == "ExprAttribute" else None)
         if chain and chain[0][0] in self.subs:
             handle, prefix, comp, rest = self._through_subs(chain)
-            if not rest and any(f.name == func.attr
-                                for f in getattr(comp, "functions", []) or []):
+            callee = next((f for f in getattr(comp, "functions", []) or []
+                           if f.name == func.attr), None)
+            if not rest and callee is not None:
+                args = self._c_args(call.args, callee)
                 return f"{self.style.symbol(prefix, mangle(func.attr))}(" + \
                        ", ".join([handle] + args) + ")"
         # An `import target/solve function`: a bare call, and NO handle -- an
@@ -1428,7 +1681,9 @@ class _BodyEmitter(CallDispatch, BodyWalker):
                     f"   /* PSS: {ct} -- widened: channel try_get output */"
                     ] + tail
         if getattr(s, "value", None) is not None:
-            return [f"{pad}{ct} {name} = {self.expr(s.value)};"] + tail
+            value = self.convert_to(s.value,
+                                    self.types.of_datatype(s.annotation))
+            return [f"{pad}{ct} {name} = {value};"] + tail
         if _dt_name(s.annotation) == _DT_STRUCT:
             # zero reserved/padding bits
             return [f"{pad}{ct} {name} = {{0}};"] + tail
@@ -1441,7 +1696,7 @@ class _BodyEmitter(CallDispatch, BodyWalker):
         if sel is not None:
             tgt, value = sel.base, self._select_assign_value(sel, s.value)
         else:
-            value = self.expr(s.value)
+            value = self.convert_to(s.value, self.types.type_of(tgt))
         if self.reg_style == "accessors":
             sf = self._struct_field(tgt)
             if sf is not None:
@@ -1450,12 +1705,36 @@ class _BodyEmitter(CallDispatch, BodyWalker):
         return [f"{pad}{self.expr(tgt)} = {value};"]
 
     def stmt_aug_assign(self, s, ind: int) -> List[str]:
+        """`x op= e` is `x = x op e` (8.3), converted back to x's type.
+
+        Rendered `x op= ...` whenever that conversion needs nothing, which is
+        the common case and reads as the source does; otherwise spelled out,
+        which evaluates the target twice -- so a target with a call in it is
+        refused rather than read twice.
+        """
         op = _BINOP.get(s.op.name)
         if op is None:
             raise ValueError(
                 f"unsupported augmented-assign op {s.op.name}")
-        return [f"{self.pad(ind)}{self.expr(s.target)} {op}= "
-                f"{self.expr(s.value)};"]
+        pad = self.pad(ind)
+        target = self.types.type_of(s.target)
+        whole = ir.ExprBin(lhs=s.target, op=s.op, rhs=s.value)
+        if target is None or target.kind != "int" \
+                or not is_integral(self.types.type_of(whole)):
+            return [f"{pad}{self.expr(s.target)} {op}= "
+                    f"{self.expr(s.value)};"]
+        tgt = self.expr(s.target)
+        value = self.convert_to(whole, target)
+        head = f"{tgt} {op} "
+        if value.startswith(head):
+            return [f"{pad}{tgt} {op}= {_c_unbracket(value[len(head):])};"]
+        if _has_call(s.target):
+            raise ValueError(
+                f"in '{getattr(self.fn, 'name', '?')}': `{tgt} {op}= ...` "
+                f"needs its result converted back to the target's type, "
+                f"which evaluates the target twice, and the target contains "
+                f"a call. Read the index into a local first.")
+        return [f"{pad}{tgt} = {value};"]
 
     def stmt_expr(self, s, ind: int) -> List[str]:
         return [f"{self.pad(ind)}{self.expr(s.expr)};"]
@@ -1463,7 +1742,10 @@ class _BodyEmitter(CallDispatch, BodyWalker):
     def stmt_return(self, s, ind: int) -> List[str]:
         pad = self.pad(ind)
         if s.value is not None:
-            return [f"{pad}return {self.expr(s.value)};"]
+            rt = getattr(self.fn, "returns", None)
+            value = (self.convert_to(s.value, self.types.of_datatype(rt))
+                     if rt is not None else self.expr(s.value))
+            return [f"{pad}return {value};"]
         return [f"{pad}return;"]
 
     def stmt_if(self, s, ind: int) -> List[str]:
@@ -1961,7 +2243,7 @@ def lower_impl(model, prefixes, *, link_style: str = "vtable",
     emit_operation = emit_operation or lower_operation
     be_kw = dict(yield_mode=yield_mode, match_default=match_default,
                  message_style=message_style, imports=imports, style=style,
-                 accs=accs, reg_map=reg_map)
+                 accs=accs, reg_map=reg_map, ctx=getattr(model, "ctx", None))
     ctor_names = model.ctor_names
     lines: List[str] = ["/* ----- Component lifecycle + operations. ----- */"]
     for node in post_order(model):
