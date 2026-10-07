@@ -203,6 +203,19 @@ def _dt_name(dtype) -> str:
     return type(dtype).__name__
 
 
+def enum_first_item(dtype) -> Optional[str]:
+    """The FIRST item of an enum ``dtype`` when its value is not 0, else None.
+
+    A value of an enum with no initializer starts at its first item (LRM 7.5),
+    which need not be 0 nor the smallest. Zero-initialisation -- C's, C++'s,
+    SV's -- gives 0, so a renderer states the item exactly when this is not
+    None."""
+    if _dt_name(dtype) != "DataTypeEnum" or not getattr(dtype, "items", None):
+        return None
+    name, value = next(iter(dtype.items.items()))
+    return name if int(value) != 0 else None
+
+
 def field_is_register(field) -> bool:
     # Not array-aware on purpose: callers dispatch on scalar-register /
     # scalar-group / array in that order, and an array of registers is emitted

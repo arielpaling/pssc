@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import List, Optional, Set, Tuple
 
-from ..progseq_model import _dt_name, func_kind, FuncKind, sub_components
+from ..progseq_model import _dt_name, enum_first_item, func_kind, FuncKind, sub_components
 
 _DT_ENUM = "DataTypeEnum"
 _DT_STRUCT = "DataTypeStruct"
@@ -157,6 +157,9 @@ def emit_struct(struct_dtype) -> str:
                 for k, v in f.datatype.items.items():
                     if int(v) == int(init.value):
                         dflt = f" = {k}"
+        elif not packed and init is None and enum_first_item(f.datatype):
+            # An enum starts at its first item (7.5); SV's starts at 0.
+            dflt = f" = {enum_first_item(f.datatype)}"
         lines.append(f"    {sv_member_type(f.datatype)} {f.name}{dflt};")
     lines.append(f"  }} {name};")
     return "\n".join(lines)

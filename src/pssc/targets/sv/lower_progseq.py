@@ -22,7 +22,7 @@ from .. import pkg_functions as pf
 from ..bit_select import bit_select
 from ..body_walker import BodyWalker, match_values
 from ..validate_calls import callee_name, is_core_call
-from ..progseq_model import (func_kind, FuncKind, field_is_reg_group, _dt_name,
+from ..progseq_model import (enum_first_item, func_kind, FuncKind, field_is_reg_group, _dt_name,
                              sub_components, SubComp, field_is_channel,
                              channel_fields, array_base_stride, scalar_offset,
                              OffsetFoldError, exec_kind, INIT_EXEC_KINDS)
@@ -1791,6 +1791,17 @@ def _field_defaults(view, members: Dict[str, str]) -> List[str]:
         if f.initial_value is not None:
             lines.append(f"      {members[f.name]} = "
                          f"{be.value_of(f.datatype, f.initial_value)};")
+            continue
+        # An enum starts at its first item (7.5); an SV enum member at 0.
+        first = enum_first_item(f.datatype)
+        if first is not None:
+            lines.append(f"      {members[f.name]} = {first};")
+            continue
+        if (_dt_name(f.datatype) == "DataTypeArray"
+                and enum_first_item(f.datatype.element_type)):
+            first = enum_first_item(f.datatype.element_type)
+            lines.append(f"      foreach ({members[f.name]}[i]) "
+                         f"{members[f.name]}[i] = {first};")
             continue
         # A struct-typed attribute carries its defaults on the STRUCT's fields,
         # not on the instance, so they have to be walked out member by member.

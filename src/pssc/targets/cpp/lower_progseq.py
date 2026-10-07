@@ -36,6 +36,7 @@ from ..body_walker import match_values
 
 from ..comments import LINE, append_trailing, blank_line, comment_lines, doc_block
 from ..progseq_model import (
+    enum_first_item,
     func_kind, FuncKind, field_is_reg_group, _dt_name, channel_fields,
     sub_components, array_base_stride, scalar_offset,
 )
@@ -974,6 +975,10 @@ class _BodyEmitter(CIntSemantics):
         # Value-initialised rather than left indeterminate. PSS gives a
         # declared variable a defined value; C++ does not, and the difference
         # is a read of stack garbage that behaves differently under -O2.
+        first = enum_first_item(s.annotation)
+        if first is not None:
+            # An enum starts at its first item (7.5), which need not be 0.
+            return [f"{pad}{ct} {name} = {first};"] + tail
         return [f"{pad}{ct} {name}{{}};"] + tail
 
     def _foreach(self, s, ind: int) -> List[str]:
@@ -1280,7 +1285,14 @@ def _data_member(f) -> str:
             raise ValueError(
                 f"array member '{f.name}' has no folded size; the generated "
                 f"member needs a bound.")
-        return f"std::array<{cpp_type(dt.element_type)}, {n}> {mangle(f.name)}{{}};"
+        first = enum_first_item(dt.element_type)
+        init = "{" + ", ".join([first] * n) + "}" if first else "{}"
+        return (f"std::array<{cpp_type(dt.element_type)}, {n}> "
+                f"{mangle(f.name)}{init};")
+    first = enum_first_item(dt)
+    if first is not None:
+        # An enum starts at its first item (7.5), which need not be 0.
+        return f"{cpp_type(dt)} {mangle(f.name)} = {first};"
     return f"{cpp_type(dt)} {mangle(f.name)}{{}};"
 
 

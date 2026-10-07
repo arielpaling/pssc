@@ -131,6 +131,15 @@ defaults in a local and a nested struct", "struct defaults in array elements".
 The cpp-virtual golden moves `wb_dma_ch_caps_s`'s defaults from the
 constructor into the type.
 
+**W11. Default values (C, C++, SV; silent).** Found with W9. A value with
+no initializer has its type's default (LRM 7.5): an enum's FIRST item, which
+need not be 0. C, C++ and SV started an enum at 0 (SV got a local right); C
+also left a scalar local indeterminate. DONE: `progseq_model.enum_first_item`
+is the one answer, stated in each language where zero-initialisation would
+differ; a C scalar local is declared with its default. Matrix case: "default
+values: an enum's first item, a bare local". C goldens: locals gain `= 0` and
+`= WB_DMA_DONE`.
+
 **W10. An array initializer (`array<bit[32], 3> v = {1, 2, 3};`).** Found
 with W9: every target fails with an internal error (`ExprList` has no
 rendering). Not scheduled; the minimum is a `CompileError`.
@@ -158,4 +167,4 @@ report:
 ## 5. Proposed commits
 
 One per item, each with its matrix cases: W1 (refusal) -> W2 -> W3 -> W8 ->
-W5 -> W9 -> W4 -> W7 -> W6 -> W10. Then C `super.initialize`.
+W5 -> W9 -> W11 -> W4 -> W7 -> W6 -> W10. Then C `super.initialize`.

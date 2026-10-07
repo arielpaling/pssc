@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import List
 
-from ..progseq_model import _dt_name
+from ..progseq_model import _dt_name, enum_first_item
 from ..sv.lower_api_types import collect_api_types, _strip_pkg
 from ..c.lower_reg_model import c_struct_name
 
@@ -112,7 +112,11 @@ def emit_struct(struct_dtype) -> str:
         # value of the type has it -- a local, an array element, a member of
         # another struct -- not only a component's field.
         iv = getattr(f, "initial_value", None)
-        init = "{}" if iv is None else _cpp_const(iv, f.datatype)
+        if iv is not None:
+            init = _cpp_const(iv, f.datatype)
+        else:
+            # An enum starts at its first item (7.5), which need not be 0.
+            init = enum_first_item(f.datatype) or "{}"
         lines.append(f"    {cpp_member_type(f.datatype)} {f.name} = {init};")
     lines.append("};")
     return "\n".join(lines)

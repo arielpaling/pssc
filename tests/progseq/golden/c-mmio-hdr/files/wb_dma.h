@@ -919,7 +919,7 @@ static inline void wb_dma_ch_init(wb_dma_ch_c *_self, int id, pssc_addr_t bank) 
  *    this operation.
  */
 static inline wb_dma_status_e wb_dma_ch_wait_completion(wb_dma_ch_c *_self) {
-    wb_dma_status_e status;
+    wb_dma_status_e status = WB_DMA_DONE;
     uint64_t tok;   /* PSS: uint8_t -- widened: channel try_get output */
     while (1) {
         status = wb_dma_ch_probe_status(_self);
@@ -1022,7 +1022,7 @@ static inline wb_dma_status_e wb_dma_ch_transfer_list(wb_dma_ch_c *_self, pssc_a
  * consumes the ERR is not determined by this model -- and for open item §6.5.
  */
 static inline wb_dma_status_e wb_dma_ch_stop_channel(wb_dma_ch_c *_self) {
-    wb_dma_status_e status;
+    wb_dma_status_e status = WB_DMA_DONE;
     wb_dma_ch_stop_channel_start(_self);
     /* wait_completion()'s loop, minus the guard release. See above. */
     while (1) {
@@ -1085,7 +1085,7 @@ static inline wb_dma_status_e wb_dma_ch_stop_channel(wb_dma_ch_c *_self) {
  *    consumed by whoever broke the rule.
  */
 static inline wb_dma_status_e wb_dma_ch_check_completion(wb_dma_ch_c *_self) {
-    wb_dma_status_e status;
+    wb_dma_status_e status = WB_DMA_DONE;
     uint64_t tok;   /* PSS: uint8_t -- widened: channel try_get output */
     if (!(pssc_chan1_try_get(&_self->inflight, &tok))) {
         pssc_message("wb_dma: check_completion() with no operation in progress on this channel -- either no *_start() was called, or a previous completion was already consumed");
@@ -1589,7 +1589,7 @@ static inline void wb_dma_pause_engine(wb_dma_c *_self, uint8_t pause) {
  */
 static inline uint16_t wb_dma_read_descriptor_residual(wb_dma_c *_self, pssc_addr_t desc_ptr) {
     (void)_self;
-    uint32_t desc_csr;
+    uint32_t desc_csr = 0;
     desc_csr = read32((volatile void *)(uintptr_t)(desc_ptr));
     return (desc_csr & 0xfff);
 }
@@ -1619,7 +1619,7 @@ static inline uint16_t wb_dma_read_descriptor_residual(wb_dma_c *_self, pssc_add
 static inline pssc_addr_t wb_dma_write_descriptor(wb_dma_c *_self, pssc_addr_t at, pssc_addr_t prev, wb_dma_desc_s desc) {
     (void)_self;
     wb_dma_desc_s d = {0};
-    uint32_t csr_word;
+    uint32_t csr_word = 0;
     /*
      * Deep copy: `desc` is the caller's struct (aggregates pass by handle)
      * and we terminate this link ourselves.

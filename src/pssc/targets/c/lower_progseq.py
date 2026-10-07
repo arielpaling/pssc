@@ -30,6 +30,7 @@ import zuspec.ir.core as ir
 from ..progseq_model import (
     func_kind, FuncKind, field_is_reg_group, _dt_name, CompKind,
     sub_components, channel_fields, array_base_stride, scalar_offset,
+    enum_first_item,
 )
 from .lower_reg_model import (accessor_base, c_struct_name, _prim_bits,
                              map_type_name)
@@ -560,6 +561,9 @@ def _default_assigns(lv: str, dtype, pad: str, depth: int = 0) -> List[str]:
                 out += _default_assigns(f"{lv}.{sf.name}", sf.datatype, pad,
                                         depth)
         return out
+    if cn == _DT_ENUM:
+        first = enum_first_item(dtype)
+        return [f"{pad}{lv} = {first};"] if first else []
     if cn == _DT_ARRAY:
         n = _array_size(dtype)
         i = f"i{depth}"
@@ -586,6 +590,8 @@ def _default_init(dtype) -> Optional[str]:
             if sub is not None:
                 parts.append(f".{sf.name} = {sub}")
         return "{" + ", ".join(parts) + "}" if parts else None
+    if cn == _DT_ENUM:
+        return enum_first_item(dtype)
     if cn == _DT_ARRAY:
         n = _array_size(dtype)
         sub = _default_init(dtype.element_type)
@@ -1770,6 +1776,14 @@ class _BodyEmitter(CIntSemantics, CallDispatch, BodyWalker):
             # and padding bits) zero. C has no default member initializer, so
             # a declaration that said only `{0}` lost `bit[8] y = 7;`.
             init = _default_init(s.annotation) or "{0}"
+            return [f"{pad}{ct} {name} = {init};"] + tail
+        if _dt_name(s.annotation) in (_DT_INT, _DT_BOOL, _DT_ENUM,
+                                      _DT_CHANDLE):
+            # PSS gives a declared variable a value (0, false, an enum's
+            # first item); C leaves an automatic one indeterminate.
+            init = _default_init(s.annotation) or "0"
+            if _dt_name(s.annotation) == _DT_ENUM and s.annotation.items:
+                init = next(iter(s.annotation.items))   # the item, even if 0
             return [f"{pad}{ct} {name} = {init};"] + tail
         return [f"{pad}{ct} {name};"] + tail
 

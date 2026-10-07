@@ -723,6 +723,26 @@ component pss_top {""" + _ONE + """
   }
 }""", ["write 32 0x1004 0x12"]),
 
+    # A value with no initializer has its type's default (LRM 7.5): 0 for a
+    # number, an enum's FIRST item -- M_A, 3 here, neither 0 nor the smallest.
+    # C left a scalar local indeterminate; C, C++ and SV started an enum at 0.
+    "default values: an enum's first item, a bare local": Case("""
+enum m_e { M_A = 3, M_B = 1 }
+struct p_s { m_e m; }
+component sub_c { m_e k; function int g() { return k; } }
+component pss_top {""" + _ONE + """
+  m_e f;
+  p_s ps;
+  array<m_e, 2> ae;
+  sub_c s;
+  target function void run() {
+    m_e l;
+    p_s lp;
+    bit[32] n;
+    a.STS.write_val(f + l + ps.m + lp.m + ae[1] + s.g() + n);
+  }
+}""", ["write 32 0x1004 0x12"]),
+
     # --- A register value on the API -------------------------------------------
     # A layout is implementation until the API names it: here an operation
     # returns one, another takes one, and the root holds one. C kept every
