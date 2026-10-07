@@ -461,14 +461,16 @@ component pss_top {
     assert log == ["hi"]
 
 
-def test_a_qualified_call_to_an_unknown_package_function_is_refused(tmp_path):
-    with pytest.raises(CompileError) as ei:
-        _compile(tmp_path, """
+def test_a_qualified_call_to_an_import_reaches_the_platform(tmp_path):
+    """`p::poke()` is the import the linker found, as `poke()` after
+    `import p::*` is. It was refused, under the qualified name, until ast2ir
+    gave the call the import's own name (test_qualified_import_call.py)."""
+    out = _compile(tmp_path, """
 package p { import target function void poke(); }
 component pss_top {
   target function void g() { p::poke(); }
 }""")
-    assert "p::poke" in _errors(ei)
+    assert "self._imports.poke()" in (out / "pss_top.py").read_text()
 
 
 # --- the async form ------------------------------------------------------------

@@ -609,7 +609,7 @@ class AstToIrTranslator:
             elif isinstance(child, pss_ast.TypedefDeclaration):
                 self._translate_typedef(ctx, child)
             elif isinstance(child, pss_ast.FunctionImportProto):
-                self._translate_import_proto(ctx, child)
+                self._translate_import_proto(ctx, child, namespace_prefix)
             elif isinstance(child, pss_ast.ExportFunction):
                 self._record_export(ctx, child, None, namespace_prefix)
             elif isinstance(child, pss_ast.ExportAction):
@@ -783,7 +783,8 @@ class AstToIrTranslator:
             return
         ctx.generic_constraints[f"{namespace_prefix}{name}"] = fn
 
-    def _translate_import_proto(self, ctx: AstToIrContext, node) -> None:
+    def _translate_import_proto(self, ctx: AstToIrContext, node,
+                                namespace_prefix: str = "") -> None:
         """Capture a package-scope ``import target/solve function`` declaration.
 
         Recorded on ``ctx.import_functions`` so the SV backend can expose each as
@@ -823,6 +824,9 @@ class AstToIrTranslator:
             is_target=(int(plat) == 1),
             is_solve=(int(plat) == 2),
         )
+        # The name a qualified call reaches it by (`p_pkg::f(...)`); see
+        # `_translate_expr_ref_static_rooted`.
+        ir_func.metadata["qualified_name"] = f"{namespace_prefix}{func_name}"
         ctx.import_functions.append(ir_func)
 
     #: ExecBlock kinds that become a named IR function on the enclosing type,
@@ -4486,6 +4490,14 @@ class AstToIrTranslator:
             if fname is None:
                 return None
             qualified, what = fname, "function"
+            # An import is the platform's function, declared to it -- and so
+            # known to every target -- under its own name. The linker found
+            # THIS one, so the call names it that way, as the unqualified
+            # call after `import p_pkg::*` does.
+            for imp in ctx.import_functions:
+                if imp.metadata.get("qualified_name") == fname:
+                    qualified = imp.name
+                    break
 
         args: List[ir.Expr] = []
         for arg_node in args_node.getParameters():

@@ -100,7 +100,15 @@ one stays refused, since PSS forbids that call. Under C the operation is
 Construction order does not change: the constructor runs its calls where it
 makes them.
 
-**W7. A package-qualified call to a package function.** `p_pkg::f(...)`
+**W7. A package-qualified call to a package function.** DONE: the
+linker's resolution already reached the IR as the qualified name; what failed
+was an IMPORT, which every target declares under its own name. ast2ir records
+an import's qualified name and gives a qualified call to it the import's name
+(`_translate_expr_ref_static_rooted`); SV, which reached an import only
+through the member form, routes it there unless the component shadows it (an
+error). A qualified call to a package function with a body already worked.
+Test: `test_qualified_import_call.py` (each target generates the same files
+for both spellings). Planned: `p_pkg::f(...)`
 should resolve through the linker to the same declaration that `f(...)` after
 `import p_pkg::*` reaches. The gate (`validate_calls`) and each emitter
 currently classify by the written name. Per

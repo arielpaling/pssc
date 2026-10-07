@@ -250,6 +250,8 @@ class _BodyEmitter(BodyWalker):
             + [f.name for f in (getattr(ctx, "import_functions", None) or [])])
         self.own_fn_names = frozenset(
             f.name for f in (getattr(comp, "functions", None) or []))
+        self.import_fn_names = frozenset(
+            f.name for f in (getattr(ctx, "import_functions", None) or []))
         # Register-group fields by PSS name, so a `regs.get_offset_of_*()` call
         # can be resolved to the group whose offsets answer it (see _fold_offset).
         self.reg_group_of = {
@@ -829,6 +831,22 @@ class _BodyEmitter(BodyWalker):
             # overrides (`executors.check`).
             e = dc.replace(e, func=ir.ExprAttribute(
                 value=ir.TypeExprRefSelf(), attr=callee_name(callee)))
+            callee = e.func
+        elif (_dt_name(callee) == "ExprRefUnresolved"
+                and callee.name in self.import_fn_names):
+            # `p_pkg::f(...)`: the import the linker found, by its own name
+            # (ast2ir). It takes the form `f(...)` after `import p_pkg::*`
+            # has -- unless this component declares an `f`, which that form
+            # would reach instead of the import the model named.
+            if callee.name in self.own_fn_names:
+                raise ValueError(
+                    f"cannot lower the qualified call to import "
+                    f"'{callee.name}': component "
+                    f"'{getattr(self.comp, 'name', '?')}' declares a function "
+                    f"of the same name, and op-model-sv reaches an import "
+                    f"only where nothing shadows it.")
+            e = dc.replace(e, func=ir.ExprAttribute(
+                value=ir.TypeExprRefSelf(), attr=callee.name))
             callee = e.func
         # Address-space builtins are arithmetic, not calls: there is no
         # address-space object in generated SV, only 64-bit addresses.
