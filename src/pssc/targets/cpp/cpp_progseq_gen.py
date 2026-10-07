@@ -89,6 +89,9 @@ def generate(model, namespace: str, *,
     except ValueError as e:
         # Two component types with one class name: the model's error.
         raise CompileError(str(e)) from None
+    # As in C: no integer type is wider than 64 bits (`int_width`).
+    from ..int_width import refuse_too_wide
+    refuse_too_wide(model, 64, "C++")
     comps = model.comp_dtypes_root_first
     _log.info("cpp-progseq: classes: %s",
               ", ".join(f"{getattr(c, 'name', '?')}->{names[c]}" for c in comps))

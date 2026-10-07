@@ -172,6 +172,11 @@ and assignments are assignment-like contexts (8.7.2): the target width
 propagates INTO the expression, so `write_val(~x)` with `bit x = 1` is
 `0xFFFFFFFE`, and that is correct.
 
+C and C++ have no integer wider than 64 bits, and refuse a model that needs
+one (`targets/int_width.py`; user ruling, 2026-10-07) rather than truncate it.
+A register wider than 64 bits has no primitive on any target (LRM 21.14.5 a),
+and the register walk refuses it.
+
 A subscript of an integer is a bit or part select, decided once from
 `ExprTypes` (`targets/bit_select.py`); every emitter renders it, read and
 read-modify-write.

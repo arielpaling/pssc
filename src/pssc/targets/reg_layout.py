@@ -50,11 +50,15 @@ def is_reserved(field) -> bool:
 
 
 def prim_bits(bits: int) -> int:
-    """The bus transaction width a register of *bits* is accessed at."""
+    """The bus transaction width a register of *bits* is accessed at.
+
+    There is no primitive wider than 64 bits (LRM 21.14.5 a), so a wider
+    register has no access at all; `collect_accessors` refuses one naming it,
+    and this raises rather than answer 64, which read half of it."""
     for w in (8, 16, 32, 64):
         if bits <= w:
             return w
-    return 64
+    raise ValueError(f"no read/write primitive is {bits} bits wide")
 
 
 def value_struct(reg_dtype) -> Optional[Any]:
@@ -171,6 +175,15 @@ def collect_accessors(comp_dtype) -> List[RegAccessor]:
 
 
 def _mk(segs, name, reg_dtype, const_off, strides) -> RegAccessor:
+    bits = value_bits(reg_dtype)
+    if bits > 64:
+        # The register's size selects its primitive (LRM 21.14.5 a), and the
+        # widest is read64/write64. Accessing it at 64 bits, as every target
+        # did, reads and writes part of it with no diagnostic.
+        from ..driver import CompileError
+        raise CompileError(
+            f"register '{'.'.join(list(segs) + [name])}' is {bits} bits wide; "
+            f"no read/write primitive is wider than 64 bits (LRM 21.14.5)")
     return RegAccessor(
         segs=tuple(segs),
         name=name,

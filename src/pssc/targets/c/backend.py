@@ -145,6 +145,10 @@ class COpModelBackend:
         # conflicting-declaration error in the header (`c_names`).
         from . import c_names
         c_names.check(self, model, s)
+        # C's widest integer is 64 bits; a wider one would be truncated with
+        # no diagnostic, so it is refused before anything is rendered.
+        from ..int_width import refuse_too_wide
+        refuse_too_wide(model, 64, "C")
         _log.info("c-progseq: prefixes: %s",
                   ", ".join(f"{getattr(c, 'name', '?')}->{self.prefixes[c]}"
                             for c in self.comps))

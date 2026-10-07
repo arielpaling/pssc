@@ -82,6 +82,7 @@ class Case(NamedTuple):
     args: Sequence[int] = (0x1000,)
     mem: Optional[Dict[int, int]] = None
     xfail: Dict[str, str] = {}           # target -> defect it is waiting on
+    refused: Dict[str, Refused] = {}     # target -> how it refuses the model
 
 
 
@@ -659,6 +660,53 @@ component pss_top {""" + _ONE + """
   }
   target function void run() { go(1); }
 }""", ["write 32 0x1004 0x7f"]),
+
+    # --- Integers wider than 64 bits -------------------------------------------
+    # C and C++ have no integer type wider than 64 bits. `bit[256]` was
+    # declared `uint64_t`, losing the top 192 bits with no diagnostic; it is
+    # refused there (user ruling, 2026-10-07). Python and SV carry it whole:
+    # 5 shifted up by 200 reads back from bits [231:200].
+    "a struct field wider than 64 bits": Case("""
+struct key_s { bit[256] k; bit[8] n; }
+component pss_top {""" + _ONE + """
+  key_s key;
+  target function void run() {
+    key.k = 5;
+    key.k = key.k << 200;
+    a.STS.write_val(key.k[231:200]);
+  }
+}""", ["write 32 0x1004 0x5"],
+        refused=_on(("c", "cpp"), Refused([r"key_s\.k", r"bit\[256\]",
+                                            r"wider than 64"]))),
+
+    "a local, parameter and result wider than 64 bits": Case("""
+component pss_top {""" + _ONE + """
+  function bit[96] widen(bit[72] x) { return x; }
+  target function void run() {
+    bit[128] w = widen(3);
+    a.STS.write_val((bit[32])w);
+  }
+}""", ["write 32 0x1004 0x3"],
+        refused=_on(("c", "cpp"), Refused([r"pss_top::widen: bit\[72\]",
+                                            r"pss_top::widen: bit\[96\]",
+                                            r"pss_top::run: bit\[128\]"]))),
+
+    # The register's size selects its primitive (LRM 21.14.5 a); the widest
+    # is 64 bits, so a 128-bit register has no access on any target. Every
+    # target used to read and write half of it with read64/write64.
+    "a register wider than 64 bits": Case("""
+pure component gw_c : reg_group_c {
+  reg_c<bit[128], READWRITE, 128> W;
+  function bit[64] get_offset_of_instance(string name) {
+    match (name) { ["W"]: return 0x0; }
+    return 0xFFFFFFFFFFFFFFFF;
+  }
+}
+component pss_top {
+  gw_c g;
+  solve function void initialize(addr_handle_t base) { g.set_handle(base); }
+  target function void run() { g.W.write_val(1); }
+}""", Refused([r"'g\.W'", r"128 bits", r"wider than 64"])),
 }
 
 
@@ -683,11 +731,12 @@ def _params():
 @pytest.mark.parametrize("name, target", list(_params()))
 def test_construct(tmp_path, name, target):
     case = CASES[name]
-    if isinstance(case.want, Refused):
+    want = case.refused.get(target, case.want)
+    if isinstance(want, Refused):
         with pytest.raises(CompileError) as ei:
             th.compile_model(tmp_path, _REGS + case.pss, target)
         text = diagnostic_text(ei)
-        for pat in case.want.patterns:
+        for pat in want.patterns:
             assert re.search(pat, text), (pat, text)
         return
     got = th.run(target, tmp_path, _REGS + case.pss, case.args, case.mem)
