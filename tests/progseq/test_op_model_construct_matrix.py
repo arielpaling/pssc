@@ -92,6 +92,14 @@ def _on(targets, why):
     return {t: why for t in targets}
 
 
+#: Python builds a sub-component whose type has a constructor AT its
+#: `initialize` call (`_sub_storage`), and it is `None` until then.
+_PY_LAZY_SUB = "py: a sub-component with a constructor is None until called"
+#: SV's init lowering (`sv/lower_init.py`) refuses an assignment to a field
+#: of a sub-component.
+_SV_INIT_SUB_FIELD = "sv: init refuses assigning a sub-component's field"
+
+
 CASES = {
     # --- D1: each register group at its own handle ---------------------------
     "two groups at two handles": Case("""
@@ -224,6 +232,60 @@ component pss_top {
   }
   target function void run() { a.STS.write_val(k); }
 }""", ["write 32 0x1004 0x7"], args=(0x1000, 1, 2, 4)),
+
+    # --- construction (LRM 20.1.2) -------------------------------------------
+    # Every instance is constructed, whether or not a constructor reaches it.
+    # C embeds a child by value, so a child its parent's constructor never
+    # named read zeroes -- `int a = 5;` was 0, silently.
+    "sub-components nobody initializes": Case("""
+component inner_c { int k = 3; }
+component sub_c {
+  int a = 5;
+  inner_c in1;
+  target function int sum() { return a + in1.k; }
+}
+component pss_top {
+  ga_c a;
+  sub_c s;
+  sub_c arr[2];
+  solve function void initialize(addr_handle_t base) { a.set_handle(base); }
+  target function void run() { a.STS.write_val(s.sum() + arr[1].sum()); }
+}""", ["write 32 0x1004 0x10"]),
+
+    # ...including one whose type has a constructor nobody calls.
+    "a sub-component whose constructor nobody calls": Case("""
+component cfg_c {
+  int a = 10;
+  int b = 1;
+  solve function void initialize(int x) { b = a + x; }
+  target function int get() { return a + b; }
+}
+component pss_top {
+  ga_c a;
+  cfg_c c;
+  solve function void initialize(addr_handle_t base) { a.set_handle(base); }
+  target function void run() { a.STS.write_val(c.get()); }
+}""", ["write 32 0x1004 0xb"], xfail=_on(["py"], _PY_LAZY_SUB)),
+
+    # A child is constructed before its parent's body runs, so what that body
+    # writes into it (`c.a = 20`) is there when the child's constructor runs.
+    "a constructor writes into a child before constructing it": Case("""
+component cfg_c {
+  int a = 10;
+  int b;
+  solve function void initialize(int x) { b = a + x; }
+}
+component pss_top {
+  ga_c a;
+  cfg_c c;
+  solve function void initialize(addr_handle_t base) {
+    a.set_handle(base);
+    c.a = 20;
+    c.initialize(1);
+  }
+  target function void run() { a.STS.write_val(c.b); }
+}""", ["write 32 0x1004 0x15"],
+        xfail={"py": _PY_LAZY_SUB, "sv": _SV_INIT_SUB_FIELD}),
 
     # --- D2: operations of a sub-component -------------------------------------
     "calling a sub-component's operation": Case("""

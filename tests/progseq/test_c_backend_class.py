@@ -201,8 +201,10 @@ def test_a_swapped_body_emitter_reaches_ctor_bodies(op_model):
 
     be = _MarkedBackend()
     be.prepare(op_model, _settings())
-    inits = re.findall(r"^void \w+_init\(.*?^\}", be.impl, re.S | re.M)
-    assert inits, "no _init body found -- the extraction is wrong"
+    # A constructor body is `<prefix>_pss_ctor`; `_init` only calls it.
+    inits = re.findall(r"^static void \w+_pss_ctor\(.*?^\}", be.impl,
+                       re.S | re.M)
+    assert inits, "no constructor body found -- the extraction is wrong"
     # EVERY one of them: a swap honoured for the root and not for the children
     # is the same inconsistency in a smaller place.
     assert all("/*m*/" in body for body in inits)

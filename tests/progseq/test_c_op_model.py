@@ -281,15 +281,29 @@ def test_init_binds_the_base_and_constructs_every_channel(c):
     function that does not exist."""
     assert_c(c, has=[
         "for (unsigned i = 0; i < 4u; i++) {",
-        "wb_dma_ch_init(&_self->ch[i], _self->_bus, i, (base + (0x20u + 0x20u * i)));",
+        "wb_dma_ch_pss_ctor(&_self->ch[i], i, (base + (0x20u + 0x20u * i)));",
     ], has_not=["get_offset_of_instance", "set_handle"])
+
+
+def test_every_channel_is_constructed_before_any_constructor_runs(c):
+    """LRM 20.1.2: construction gives every instance its bus, channels and
+    initial values, then the constructor bodies run. The channel's
+    `initialize` call runs its body only (`_pss_ctor`), so the bus no longer
+    rides on it."""
+    body = c[c.index("static void wb_dma_pss_construct("):]
+    body = body[:body.index("\n}")]
+    assert ("for (unsigned i = 0; i < 4u; i++) "
+            "wb_dma_ch_pss_construct(&_self->ch[i], _self->_bus);") in body
+    init = c[c.index("void wb_dma_init("):]
+    init = init[:init.index("\n}")]
+    assert init.index("wb_dma_pss_construct(") < init.index("wb_dma_pss_ctor(")
 
 
 def test_channel_init_binds_its_own_bank(c):
     """`regs.set_handle(bank)` on the channel -> its `regs` group's base. This is
     the per-instance half of the fold: the constant part is baked into the
     accessors, the instance part lands here."""
-    body = c[c.index("void wb_dma_ch_init("):]
+    body = c[c.index("void wb_dma_ch_pss_ctor("):]
     body = body[:body.index("\n}")]
     assert "_self->base_regs = bank" in body
     assert "_self->chan = id;" in body

@@ -52,7 +52,7 @@ def declared_names(backend, model, s) -> List[Tuple[str, str]]:
     from ..reg_layout import reg_maps_for
     from .lower_api_types import c_member_type
     from ..progseq_model import sub_components
-    from .lower_progseq import _operations, mangle, regular_nodes
+    from .lower_progseq import _ctor, _operations, mangle, regular_nodes
     from .lower_reg_model import accessor_kinds, c_struct_name, map_type_name
 
     style, prefixes = backend.style, backend.prefixes
@@ -82,6 +82,12 @@ def declared_names(backend, model, s) -> List[Tuple[str, str]]:
         comp = node.dtype
         p, who = prefixes[comp], _short(comp)
         out.append((style.symbol(p, "init"), f"the constructor of '{who}'"))
+        # `_init`'s two file-local halves (`lower_progseq._lifecycle_impl`).
+        out.append((style.symbol(p, "pss_construct"),
+                    f"the construction of '{who}'"))
+        if _ctor(comp, model.ctor_names) is not None:
+            out.append((style.symbol(p, "pss_ctor"),
+                        f"the constructor body of '{who}'"))
         if model.is_root(comp) and s.lifecycle == "malloc":
             out.append((style.symbol(p, "create"), f"the factory of '{who}'"))
             out.append((style.symbol(p, "destroy"),

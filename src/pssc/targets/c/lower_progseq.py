@@ -1970,7 +1970,7 @@ class _CtorMixin:
             f"would become a call to a group object that does not exist.")
 
     def _sub_ctor_call(self, call) -> Optional[str]:
-        """`ch[i].initialize(...)` -> `<sub>_init(&s->ch[i], ...)`."""
+        """`ch[i].initialize(...)` -> `<sub>_pss_ctor(&_self->ch[i], ...)`."""
         func = call.func
         if _dt_name(func) != "ExprAttribute":
             return None
@@ -1990,14 +1990,12 @@ class _CtorMixin:
         idx = chain[0][1]
         elem = (f"&{self.h}->{mangle(sub.name)}[{self.expr(idx)}]"
                 if idx is not None else f"&{self.h}->{mangle(sub.name)}")
-        fwd = [elem]
-        if self.link_style == "vtable":
-            # The child gets the parent's bus. This is the ONE piece of state
-            # that flows down the tree, and it flows at construction so no
-            # operation ever has to walk anywhere to find it.
-            fwd.append(f"{self.h}->{BUS}")
-        fwd += [self.expr(a) for a in call.args]
-        return (f"{self.style.symbol(sub_prefix, 'init')}("
+        # The child was CONSTRUCTED with its parent (bus, channels, initial
+        # values; `_pss_construct`), so this runs its constructor body only:
+        # re-constructing it here would undo whatever the parent's body
+        # already wrote into it.
+        fwd = [elem] + [self.expr(a) for a in call.args]
+        return (f"{self.style.symbol(sub_prefix, 'pss_ctor')}("
                 + ", ".join(fwd) + ")")
 
     #: An `initialize` body is a SOLVE context. The registry refuses a
@@ -2138,9 +2136,34 @@ def _lifecycle_impl(node, prefixes, link_style: str, qual: str,
     cp = _create_params(ctor, link_style)
     sig_params = f", {cp}" if cp else ""
 
-    lines = [f"{qual}void {sym(prefix, 'init')}({prefix_t} *{HANDLE}{sig_params}) {{"]
+    # CONSTRUCTION IS TWO STEPS (LRM 20.1.2), and so is `_init`. Every
+    # instance in the tree is constructed -- bus, channels, field initial
+    # values -- whether or not a constructor reaches it; then the root's
+    # constructor body runs, calling its children's as it chooses. One
+    # function doing both meant a sub-component whose parent never called
+    # its `initialize` had neither: `int a = 5;` read 0, with no error. The
+    # two halves are file-local; `_init` is the API and keeps its signature.
+    helper = "static inline " if qual else "static "
+    construct, ctor_fn = sym(prefix, "pss_construct"), sym(prefix, "pss_ctor")
+    bus_p = f", const pssc_mem_if *{BUS}" if link_style == "vtable" else ""
+    body: List[str] = []
     if link_style == "vtable":
-        lines.append(f"    {HANDLE}->{BUS} = {BUS};")
+        body.append(f"    {HANDLE}->{BUS} = {BUS};")
+    for f in channel_fields(comp):
+        body.append(f"    pssc_chan1_init(&{HANDLE}->{mangle(f.name)});")
+    body += _field_defaults(comp)
+    for sub in sub_components(comp):
+        sub_construct = sym(prefixes[sub.dtype], "pss_construct")
+        fwd = f", {HANDLE}->{BUS}" if link_style == "vtable" else ""
+        if sub.size is not None:
+            body.append(f"    for (unsigned i = 0; i < {sub.size}u; i++) "
+                        f"{sub_construct}(&{HANDLE}->{mangle(sub.name)}[i]{fwd});")
+        else:
+            body.append(f"    {sub_construct}(&{HANDLE}->{mangle(sub.name)}{fwd});")
+    lines = [f"{helper}void {construct}({prefix_t} *{HANDLE}{bus_p}) {{"]
+    lines += body or [f"    (void){HANDLE};"]
+    lines.append("}")
+
     # THE IMPLICIT BINDING (`group_binding`): a component with one register
     # group and a constructor that binds none binds it to the constructor's
     # first address parameter. `src/pssc/testing/models` declares
@@ -2149,26 +2172,40 @@ def _lifecycle_impl(node, prefixes, link_style: str, qual: str,
     # other group is bound by the `set_handle` the body states -- a group
     # nothing binds was refused before generation started.
     implicit = group_binding.bindings([comp], ctor_names)[id(comp)].implicit
-    if implicit is not None:
-        g, arg = implicit
-        base = f"{HANDLE}->{style.group_base(g)}"
-        lines.append(f"    {base} = {mangle(arg)};")
-        if reg_map:
-            # The one cast in the generated driver, and it is here (or at a
-            # `set_handle`) rather than at every access for that reason.
-            gf = next(f for f in comp.fields if f.name == g)
-            mt = map_type_name(gf.datatype, style)
-            lines.append(f"    {HANDLE}->{mangle(g)} = ({mt} *)(uintptr_t){base};")
-    for f in channel_fields(comp):
-        lines.append(f"    pssc_chan1_init(&{HANDLE}->{mangle(f.name)});")
-    lines += _field_defaults(comp)
     if ctor is not None:
+        ctor_p = "".join(f", {c_type(a.annotation)} {mangle(a.arg)}"
+                         for a in ctor.args.args)
+        body = []
+        if implicit is not None:
+            g, arg = implicit
+            base = f"{HANDLE}->{style.group_base(g)}"
+            body.append(f"    {base} = {mangle(arg)};")
+            if reg_map:
+                # The one cast in the generated driver, and it is here (or at
+                # a `set_handle`) rather than at every access for that reason.
+                gf = next(f for f in comp.fields if f.name == g)
+                mt = map_type_name(gf.datatype, style)
+                body.append(f"    {HANDLE}->{mangle(g)} = "
+                            f"({mt} *)(uintptr_t){base};")
         ctor_cls = ctor_emitter_cls(emitter_cls or _BodyEmitter)
         be = ctor_cls(ctor, comp, prefix, reg_style=reg_style,
                       handle=HANDLE, prefixes=prefixes,
                       link_style=link_style, style=style,
                       ctor_names=ctor_names, reg_map=reg_map, **be_kw)
-        lines += be.stmts(ctor.body, 1)
+        body += be.stmts(ctor.body, 1)
+        code = [ln for ln in body
+                if not ln.lstrip().startswith(("/*", "*", "//"))]
+        if not any(re.search(rf"\b{HANDLE}\b", ln) for ln in code):
+            body.insert(0, f"    (void){HANDLE};")
+        lines.append(f"{helper}void {ctor_fn}({prefix_t} *{HANDLE}{ctor_p}) {{")
+        lines += body
+        lines.append("}")
+
+    lines.append(f"{qual}void {sym(prefix, 'init')}({prefix_t} *{HANDLE}{sig_params}) {{")
+    lines.append(f"    {construct}({HANDLE}{', ' + BUS if bus_p else ''});")
+    if ctor is not None:
+        args = "".join(f", {mangle(a.arg)}" for a in ctor.args.args)
+        lines.append(f"    {ctor_fn}({HANDLE}{args});")
     lines.append("}")
 
     # `_create`/`_destroy` are the ONLY things in a generated image that call an

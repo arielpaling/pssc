@@ -5,7 +5,7 @@ derived class (`class Der(Base)`, `class der : public base`,
 `class der extends base`), with the language's own `super` (`super().f`,
 `base::f`, `super.f`). Three renderings of one model must behave as one: each
 case here runs on all three, and the message and memory-access traces must be
-the same, and the expected one. See `targets/comp_inherit.py`.
+the same, and the expected one. C, which flattens, is held to the same traces. See `targets/comp_inherit.py`.
 """
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ import pytest
 
 from . import trace_harness as th
 
+_CC = th.CC
 _CXX = th.CXX
 _VERILATOR = th.VERILATOR
 _run_py = th._run_py
@@ -141,6 +142,24 @@ component pss_top : der_c {
 def test_python(tmp_path, case):
     pss, args, mem, want = _CASES[case]
     assert _run_py(tmp_path, pss, args, mem) == want
+
+
+#: C renders the COMPLETED (flattened) view rather than a class per type, but
+#: the behaviour is the same and so is the trace. A case C cannot run yet is a
+#: strict xfail naming its defect.
+_C_XFAIL = {
+    "constructors": "C does not lower super.initialize(...) in a constructor",
+}
+
+
+@pytest.mark.c_toolchain
+@pytest.mark.skipif(not _CC, reason="no C compiler")
+@pytest.mark.parametrize("case", [
+    pytest.param(c, marks=pytest.mark.xfail(strict=True, reason=_C_XFAIL[c]))
+    if c in _C_XFAIL else c for c in sorted(_CASES)])
+def test_c(tmp_path, case):
+    pss, args, mem, want = _CASES[case]
+    assert th._run_c(tmp_path, pss, args, mem) == want
 
 
 @pytest.mark.c_toolchain

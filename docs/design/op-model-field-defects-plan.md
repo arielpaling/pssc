@@ -48,7 +48,25 @@ Found on the way:
     its `initialize`.** With no call, its field initializers never run:
     `int a = 5;` reads 0, so `virtual dispatch` prints `101 110 110` where
     PSS gives `106 117 117`. This one is SILENT. LRM 20.1.2 constructs every
-    instance.
+    instance. FIXED: `<p>_init` is now two file-local halves,
+    `<p>_pss_construct` (bus, channels, initial values, and every
+    sub-component's construct, recursively) and `<p>_pss_ctor` (the
+    constructor body). A parent's `sub.initialize(...)` calls the child's
+    `_pss_ctor` only, so what the parent wrote into the child first survives.
+    `_init`'s signature is unchanged. The inheritance cases now also run on C
+    (`test_op_model_inherit_native.py::test_c`). Matrix cases:
+    "sub-components nobody initializes", "a sub-component whose constructor
+    nobody calls", "a constructor writes into a child before constructing it".
+    Two gaps the last two found on other targets, both loud rather than
+    silent, and both strict xfails:
+    * Python builds a sub-component whose type has a constructor AT its
+      `initialize` call (`py/backend.py::_sub_storage`); until then it is
+      `None`, so a sub nobody constructs, or a write into one before its
+      constructor, raises. Fixing it changes how a sub-component's class is
+      constructed (the inheritance path's `_pss_construct`/`_pss_ctor` split
+      already does it).
+    * SV's init lowering refuses an assignment to a sub-component's field
+      (`sv/lower_init.py`: "unsupported statement in init: StmtAssign").
   * **A sub-component named `t` collides with the handle type.** The accessor
     `<prefix>_t()` redeclares the typedef `<prefix>_t`. FIXED: C and C++ types
     now keep their PSS names (`pss_top`, `x_c`, `x_s`, `x_e`), and

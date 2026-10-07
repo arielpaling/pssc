@@ -93,6 +93,12 @@ Inside a function the generated names are `_self` (the handle) and `_bus`
 `mangle` renames a model's own `_self` as it renames a C keyword. Never spell
 the handle out: a model may name a parameter `s`.
 
+C constructs in two steps, as LRM 20.1.2 does: `<p>_init` calls the
+file-local `<p>_pss_construct` (bus, channels, initial values, then every
+sub-component's construct) and then `<p>_pss_ctor` (the constructor body). A
+`sub.initialize(...)` in a constructor is the child's `_pss_ctor` alone; the
+child was constructed already, whether or not anything calls it.
+
 Which `solve function` is the constructor comes from `model.ctor_names`, never
 from `progseq_model.current_ctor_names()`. The ambient value remains only for
 callers outside a compile; no emitter reads it, and

@@ -211,7 +211,7 @@ PSSC_MAYBE_UNUSED static inline void wb_dma_ch_regs_swptr_write_masked(wb_dma_ch
 
 /* ----- Component lifecycle + operations. ----- */
 /* --- wb_dma_ch_c --- */
-void wb_dma_ch_init(wb_dma_ch_c *_self, const pssc_mem_if *_bus, int id, pssc_addr_t bank) {
+static void wb_dma_ch_pss_construct(wb_dma_ch_c *_self, const pssc_mem_if *_bus) {
     _self->_bus = _bus;
     pssc_chan1_init(&_self->inflight);
     pssc_chan1_init(&_self->wake);
@@ -219,8 +219,14 @@ void wb_dma_ch_init(wb_dma_ch_c *_self, const pssc_mem_if *_bus, int id, pssc_ad
     _self->caps.ars = 1;
     _self->caps.ed = 1;
     _self->caps.cbuf = 1;
+}
+static void wb_dma_ch_pss_ctor(wb_dma_ch_c *_self, int id, pssc_addr_t bank) {
     _self->chan = id;
     (_self->base_regs = bank);
+}
+void wb_dma_ch_init(wb_dma_ch_c *_self, const pssc_mem_if *_bus, int id, pssc_addr_t bank) {
+    wb_dma_ch_pss_construct(_self, _bus);
+    wb_dma_ch_pss_ctor(_self, id, bank);
 }
 
 /*
@@ -838,14 +844,21 @@ void wb_dma_ch_wait_hint(wb_dma_ch_c *_self) {
 }
 
 /* --- wb_dma_c --- */
-void wb_dma_init(wb_dma_c *_self, const pssc_mem_if *_bus, pssc_addr_t base) {
+static void wb_dma_pss_construct(wb_dma_c *_self, const pssc_mem_if *_bus) {
     _self->_bus = _bus;
     _self->num_ch = 4;
     _self->pri_levels = 4;
+    for (unsigned i = 0; i < 4u; i++) wb_dma_ch_pss_construct(&_self->ch[i], _self->_bus);
+}
+static void wb_dma_pss_ctor(wb_dma_c *_self, pssc_addr_t base) {
     (_self->base_regs = base);
     for (unsigned i = 0; i < 4u; i++) {
-        wb_dma_ch_init(&_self->ch[i], _self->_bus, i, (base + (0x20u + 0x20u * i)));
+        wb_dma_ch_pss_ctor(&_self->ch[i], i, (base + (0x20u + 0x20u * i)));
     }
+}
+void wb_dma_init(wb_dma_c *_self, const pssc_mem_if *_bus, pssc_addr_t base) {
+    wb_dma_pss_construct(_self, _bus);
+    wb_dma_pss_ctor(_self, base);
 }
 wb_dma_c *wb_dma_create(const pssc_mem_if *_bus, pssc_addr_t base) {
     wb_dma_c *_self = (wb_dma_c *)malloc(sizeof(wb_dma_c));
