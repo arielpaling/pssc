@@ -9,172 +9,18 @@ the same, and the expected one. See `targets/comp_inherit.py`.
 """
 from __future__ import annotations
 
-import argparse
-import importlib
-import shutil
-import subprocess
-import sys
-
 import pytest
 
-from pssc import driver
+from . import trace_harness as th
 
-from .conftest import available_cpp_compilers
-
-_CXX = available_cpp_compilers()
-_VERILATOR = shutil.which("verilator")
-
-#: A platform that logs every access and answers reads from a map; the
-#: Python side is `pssc_rt.MemoryBus`, which logs the same things.
-_CPP_MAIN = r"""
-#include "pss_top.hpp"
-#include <cstdarg>
-#include <cstdio>
-#include <map>
-namespace pssc {
-void message(const char *fmt, ...) {
-    va_list ap; va_start(ap, fmt); std::vprintf(fmt, ap); va_end(ap);
-    std::printf("\n");
-}
-}
-struct mem : pssc::mem_if {
-    std::map<pssc::addr_t, std::uint64_t> m;
-    std::uint64_t rd(int w, pssc::addr_t a) {
-        std::uint64_t v = m[a] & (w == 64 ? ~0ull : ((1ull << w) - 1));
-        std::printf("read %d 0x%llx 0x%llx\n", w, (unsigned long long)a,
-                    (unsigned long long)v);
-        return v;
-    }
-    void wr(int w, pssc::addr_t a, std::uint64_t d) {
-        m[a] = d;
-        std::printf("write %d 0x%llx 0x%llx\n", w, (unsigned long long)a,
-                    (unsigned long long)d);
-    }
-    void write8 (pssc::addr_t a, std::uint8_t  d) override { wr(8, a, d); }
-    std::uint8_t  read8 (pssc::addr_t a) override { return (std::uint8_t)rd(8, a); }
-    void write16(pssc::addr_t a, std::uint16_t d) override { wr(16, a, d); }
-    std::uint16_t read16(pssc::addr_t a) override { return (std::uint16_t)rd(16, a); }
-    void write32(pssc::addr_t a, std::uint32_t d) override { wr(32, a, d); }
-    std::uint32_t read32(pssc::addr_t a) override { return (std::uint32_t)rd(32, a); }
-    void write64(pssc::addr_t a, std::uint64_t d) override { wr(64, a, d); }
-    std::uint64_t read64(pssc::addr_t a) override { return rd(64, a); }
-};
-int main() {
-    mem bus;
-    @PRELOAD@
-    auto top = pss_top::pss_top::create(bus@ARGS@);
-    top->run();
-    return 0;
-}
-"""
-
-
-def _compile(tmp_path, pss, target):
-    p = tmp_path / "m.pss"
-    p.write_text("import std_pkg::*;\nimport addr_reg_pkg::*;\n" + pss)
-    out = tmp_path / target
-    driver.compile([str(p)], target=target, opts=argparse.Namespace(
-        progseq_root="pss_top", output_dir=str(out)))
-    return out
-
-
-def _run_py(tmp_path, pss, args=(), mem=None):
-    out = _compile(tmp_path, pss, "op-model-py")
-    sys.path.insert(0, str(out))
-    try:
-        for name in ("pss_top", "pssc_rt"):
-            sys.modules.pop(name, None)
-        mod = importlib.import_module("pss_top")
-        rt = importlib.import_module("pssc_rt")
-    finally:
-        sys.path.remove(str(out))
-    bus = rt.MemoryBus()
-    for a, v in (mem or {}).items():
-        bus.mem[a] = v
-    mod.PssTop(bus, *args).run()
-    return [d if k == "message" else f"{k} {w} 0x{a:x} 0x{d:x}"
-            for k, w, a, d in bus.log]
+_CXX = th.CXX
+_VERILATOR = th.VERILATOR
+_run_py = th._run_py
+_run_sv = th._run_sv
 
 
 def _run_cpp(tmp_path, pss, cxx, args=(), mem=None):
-    out = _compile(tmp_path, pss, "op-model-cpp")
-    preload = " ".join(f"bus.m[{a:#x}] = {v:#x};" for a, v in
-                       (mem or {}).items())
-    (out / "main.cpp").write_text(
-        _CPP_MAIN.replace("@PRELOAD@", preload).replace(
-            "@ARGS@", "".join(f", {a:#x}" for a in args)))
-    build = subprocess.run(
-        [cxx, "-std=c++17", "-Wall", "-Wextra", "-Werror", "-I", str(out),
-         str(out / "main.cpp"), "-o", str(out / "run")],
-        capture_output=True, text=True)
-    assert build.returncode == 0, build.stderr
-    run = subprocess.run([str(out / "run")], capture_output=True, text=True)
-    assert run.returncode == 0, run.stderr
-    return run.stdout.splitlines()
-
-
-#: The SV platform: logs as the others do, answers reads from a map. The
-#: model's `run` is reached through the context API, which takes its methods
-#: from exports -- so `_run_sv` exports it (`_EXPORT_RUN`).
-_SV_TB = r"""
-module top;
-  import pssc_reg_pkg::*;
-  import pss_top_pkg::*;
-
-  class plat_c;
-    bit [63:0] m[addr_handle_t];
-    task rd(int w, addr_handle_t a, output bit [63:0] v);
-      v = m.exists(a) ? m[a] : 0;
-      if (w != 64) v &= (64'h1 << w) - 1;
-      $display("read %0d 0x%0h 0x%0h", w, a, v);
-    endtask
-    task wr(int w, addr_handle_t a, bit [63:0] d);
-      m[a] = d;
-      $display("write %0d 0x%0h 0x%0h", w, a, d);
-    endtask
-    task write8 (addr_handle_t a, bit [7:0]  d); wr(8, a, d); endtask
-    task write16(addr_handle_t a, bit [15:0] d); wr(16, a, d); endtask
-    task write32(addr_handle_t a, bit [31:0] d); wr(32, a, d); endtask
-    task write64(addr_handle_t a, bit [63:0] d); wr(64, a, d); endtask
-    task read8 (addr_handle_t a, output bit [7:0]  d); bit [63:0] v; rd(8, a, v); d = v; endtask
-    task read16(addr_handle_t a, output bit [15:0] d); bit [63:0] v; rd(16, a, v); d = v; endtask
-    task read32(addr_handle_t a, output bit [31:0] d); bit [63:0] v; rd(32, a, v); d = v; endtask
-    task read64(addr_handle_t a, output bit [63:0] d); rd(64, a, d); endtask
-  endclass
-
-  initial begin
-    plat_c plat = new();
-    pss_top_ctxt_if dut;
-    @PRELOAD@
-    dut = pss_top_root #(plat_c)::create(plat@ARGS@);
-    dut.run();
-    $finish;
-  end
-endmodule
-"""
-
-_EXPORT_RUN = "\nextend component pss_top { export target function run; }\n"
-
-
-def _run_sv(tmp_path, pss, args=(), mem=None):
-    out = _compile(tmp_path, pss + _EXPORT_RUN, "op-model-sv")
-    preload = " ".join(f"plat.m[64'h{a:x}] = 64'h{v:x};" for a, v in
-                       (mem or {}).items())
-    (out / "tb.sv").write_text(
-        _SV_TB.replace("@PRELOAD@", preload).replace(
-            "@ARGS@", "".join(f", 64'h{a:x}" for a in args)))
-    files = [str(out / "pssc_reg_pkg.sv"), str(out / "pss_top_pkg.sv"),
-             str(out / "tb.sv")]
-    build = subprocess.run(
-        [_VERILATOR, "--binary", "-Wno-fatal", "--top-module", "top",
-         "-Mdir", str(tmp_path / "obj"), "-o", "sim"] + files,
-        capture_output=True, text=True, cwd=tmp_path)
-    assert build.returncode == 0, build.stdout + build.stderr
-    run = subprocess.run([str(tmp_path / "obj" / "sim")],
-                         capture_output=True, text=True, cwd=tmp_path)
-    assert run.returncode == 0, run.stdout + run.stderr
-    # Verilator's own report lines start with `- `; the model's never do.
-    return [ln for ln in run.stdout.splitlines() if not ln.startswith("- ")]
+    return th._run_cpp(tmp_path, pss, args, mem, cxx=cxx)
 
 
 _CASES = {
