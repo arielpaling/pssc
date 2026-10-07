@@ -778,7 +778,7 @@ def _import_signature(fn) -> str:
     return f"{ret} {mangle(fn.name)}({', '.join(parts) or 'void'})"
 
 
-def lower_imports(imports: Dict[str, object]) -> str:
+def lower_imports(imports: Dict[str, object], yield_mode: str = "none") -> str:
     """Prototypes for what the PLATFORM supplies, under their PSS names.
 
     THE NAME IS THE MODEL'S, not a table's. `pssc_r32` and friends are hard-coded
@@ -797,16 +797,25 @@ def lower_imports(imports: Dict[str, object]) -> str:
     `is_solve` vs `is_target` does not survive here, and correctly: the
     distinction is about WHEN a function runs relative to solving, and this
     target has no solver (HAVE_RUNTIME_SOLVER=false). Both are plain C calls.
+
+    `--yield import` adds `yield_()`: that mode lowers a PSS `yield` to a call
+    on the platform, and a call with no prototype is an implicit declaration.
+    C++ declares it on its import interface, and SV on `import_api_if`.
     """
-    if not imports:
-        return ""
-    lines = ["/* ----- Imported functions: supplied by the PLATFORM. ----- */",
-             "/* Declared by the model with `import target/solve function`;"
-             " named here exactly as */",
-             "/* the model names them. Implement each one, or the link fails"
-             " with the PSS name. */"]
-    for name in sorted(imports):
-        lines.append(f"{_import_signature(imports[name])};")
+    lines = []
+    if imports:
+        lines += ["/* ----- Imported functions: supplied by the PLATFORM. ----- */",
+                  "/* Declared by the model with `import target/solve function`;"
+                  " named here exactly as */",
+                  "/* the model names them. Implement each one, or the link fails"
+                  " with the PSS name. */"]
+        for name in sorted(imports):
+            lines.append(f"{_import_signature(imports[name])};")
+    if yield_mode == "import":
+        lines += ["/* `--yield import`: what a PSS `yield` costs on this platform"
+                  " (a WFI, a */",
+                  "/* watchdog kick, a delay). Supplied by the PLATFORM. */",
+                  "void yield_(void);"]
     return "\n".join(lines)
 
 

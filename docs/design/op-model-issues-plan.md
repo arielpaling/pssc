@@ -67,7 +67,10 @@ private to the `.c`. One walk over the public signatures decides the set.
 `--header-only` is unaffected. Test: the matrix case, plus a check that the
 header compiles on its own.
 
-**W3. `--yield import` declares `yield_()` (C).** It goes in the header's
+**W3. `--yield import` declares `yield_()` (C).** DONE (`lower_imports`;
+`c_names` reserves the name; test
+`test_c_body_lowering.py::test_yield_import_is_declared_for_the_platform`).
+Planned: it goes in the header's
 import-API section, beside the other platform functions the model calls,
 `void yield_(void);`. C++ already declares it. Test: compile the generated C
 with `-Werror=implicit-function-declaration`, which the trace harness already

@@ -361,7 +361,7 @@ class COpModelBackend:
         an implicit one (which C99 rejects, but only with -Werror).
         """
         from .lower_progseq import lower_imports
-        return self._block(lower_imports(self.imports))
+        return self._block(lower_imports(self.imports, s.yield_mode))
 
     @overridable(since='0.1', stability='stable')
     def emit_decls(self, model, s: CSettings) -> List[str]:

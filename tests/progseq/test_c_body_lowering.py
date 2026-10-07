@@ -423,3 +423,13 @@ def test_yield_can_call_an_import(tmp_path):
 def test_yield_output_compiles(tmp_path):
     _, _, out = _generate(tmp_path, _YIELD)
     compile_c(out, _CC[0])
+
+
+@needs_cc
+def test_yield_import_is_declared_for_the_platform(tmp_path):
+    """`yield_()` is the platform's, so the header declares it beside the
+    model's imports. It used to be called with no prototype: an implicit
+    declaration, which `-Werror` turns into a failed build."""
+    hdr, _, out = _generate(tmp_path, _YIELD, c_yield="import")
+    assert "void yield_(void);" in hdr
+    compile_c(out, _CC[0])
