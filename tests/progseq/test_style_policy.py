@@ -142,7 +142,7 @@ def test_the_lifecycle_symbols_move_too(registered_style):
     for kind in ("init", "create", "destroy"):
         assert f"ACME_dma_engine__{kind}(" in text, kind
     # the call `_create` makes to `_init` is the site that hides
-    assert "if (self) ACME_dma_engine__init(self" in text
+    assert "if (_self) ACME_dma_engine__init(_self" in text
 
 
 def test_a_file_naming_policy_renames_the_files(registered_style):
@@ -434,7 +434,7 @@ def test_policy_cannot_alter_address(registered_style):
     registered_style(_Acme())
 
     def addrs(text):
-        return re.findall(r"s->base_\w+ \+ 0x[0-9a-f]+u(?: \+ [^;)]+)?", text)
+        return re.findall(r"_self->base_\w+ \+ 0x[0-9a-f]+u(?: \+ [^;)]+)?", text)
 
     default = addrs(_c_output())
     acme = addrs(_c_output(c_style="acme", c_link_style="direct"))

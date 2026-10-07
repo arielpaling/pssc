@@ -56,9 +56,16 @@ Found on the way:
     sub-component or operation named `create`, `destroy` or `init`) as a
     user error naming both sources.
   * **A C parameter or local named `s` collides with the handle parameter.**
-    `x_f(x_c *s, x_s s)` does not compile; `self` and `bus` in a constructor's
-    parameters would do the same. Open: needs one mangling rule for
-    parameters and locals, applied at every declaration and reference.
+    `x_f(x_c *s, x_s s)` did not compile; `self` and `bus` in a constructor's
+    parameters did the same. FIXED (user ruling, 2026-10-07): C's handle is
+    `_self` and its bus parameter and member `_bus` (`c_names.HANDLE`/`BUS`;
+    a leading `_` is not reserved outside file scope, `__` would be), and
+    `mangle` renames a model's own `_self`/`_bus` as it renames a C keyword.
+    The matrix found the same class on the other targets, fixed the same
+    way: a Python parameter `self` or `imports`, and a root constructor
+    parameter `imp` or `self` in the C++ and SV factories (now `_imp`/`_self`
+    and `pss_imp`/`pss_model`). Cases: "names the generated code also uses",
+    "root constructor parameters named like generated ones".
   * **`super.initialize(...)` in a constructor is not lowered.** It reports
     "no function named `_pss_super_base_c_initialize`".
 

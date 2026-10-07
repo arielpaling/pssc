@@ -88,6 +88,10 @@ with one name are told apart. C has one namespace for all of it, so
 spell it and refuses a duplicate before any file is written (a sub-component
 named `create` is the factory's name). A new naming rule adds its names there;
 `test_c_names.py` fails if the check gathers a name the backend does not emit.
+Inside a function the generated names are `_self` (the handle) and `_bus`
+(`c_names.HANDLE`/`BUS`; a leading `_` is reserved only at file scope), and
+`mangle` renames a model's own `_self` as it renames a C keyword. Never spell
+the handle out: a model may name a parameter `s`.
 
 Which `solve function` is the constructor comes from `model.ctor_names`, never
 from `progseq_model.current_ctor_names()`. The ambient value remains only for

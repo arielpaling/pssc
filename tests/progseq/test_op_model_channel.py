@@ -307,8 +307,8 @@ def test_c_lowers_a_depth_1_channel(tmp_path):
     h = (tmp_path / "chan.h").read_text()
     c = (tmp_path / "chan.c").read_text()
     assert "pssc_chan1_t wake;" in h
-    assert "pssc_chan1_init(&self->wake);" in c
-    assert "pssc_chan1_try_get(&s->wake, &t)" in c
+    assert "pssc_chan1_init(&_self->wake);" in c
+    assert "pssc_chan1_try_get(&_self->wake, &t)" in c
     # The runtime is copied in beside the generated files, so the directory
     # still compiles on its own.
     assert (tmp_path / "pssc_chan.h").exists()

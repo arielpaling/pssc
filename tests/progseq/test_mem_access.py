@@ -141,13 +141,14 @@ def test_the_generated_accessors_use_the_funnel(tmp_path):
     """End to end, because the funnel being right is worth nothing if the
     generator kept its own copy."""
     from pssc import testing
+    from pssc.targets.c.c_names import HANDLE
     with testing.compile_op_model("op-model-c", output_dir=tmp_path) as out:
         # The .c: every memory access the funnel renders is in an accessor or
         # an operation body, and both live there.
         text = out.read("dma_engine.c")
-    assert f"{DEFAULT.read_fn(32)}({DEFAULT.bus_expr('s')}" in text
-    assert f"{DEFAULT.write_fn(32)}({DEFAULT.bus_expr('s')}" in text
+    assert f"{DEFAULT.read_fn(32)}({DEFAULT.bus_expr(HANDLE)}" in text
+    assert f"{DEFAULT.write_fn(32)}({DEFAULT.bus_expr(HANDLE)}" in text
     for line in text.splitlines():
         if "_write_masked(" in line and "static inline" in line:
-            assert "_read_val(s" in line, (
+            assert f"_read_val({HANDLE}" in line, (
                 f"a masked write lost its read: {line}")

@@ -1289,11 +1289,11 @@ package wb_dma_c_pkg;
       pss_root = new(this);
     endfunction
 
-    static function wb_dma_c_ctxt_if create(Timp imp, addr_handle_t base);
-      wb_dma_c_root #(Timp) model = new(imp);
-      model.pss_root.initialize(base);
-      model.pss_root.pss_do_init();
-      return model;
+    static function wb_dma_c_ctxt_if create(Timp pss_imp, addr_handle_t base);
+      wb_dma_c_root #(Timp) pss_model = new(pss_imp);
+      pss_model.pss_root.initialize(base);
+      pss_model.pss_root.pss_do_init();
+      return pss_model;
     endfunction
 
     // Exported function `configure_interrupt_routing`, run on the root.

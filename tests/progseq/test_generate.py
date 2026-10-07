@@ -110,12 +110,12 @@ def test_component_one_class(gen):
     assert "regs = new(pss_imp, 0);" in sv
     assert "regs = new(pss_imp, base);" in sv
     # factory returns the context handle
-    assert ("static function dma_engine_c_ctxt_if create(Timp imp, "
+    assert ("static function dma_engine_c_ctxt_if create(Timp pss_imp, "
             "addr_handle_t base);") in sv
     # construction, then the model's constructor, then PSS construction (D3)
-    assert ("dma_engine_c_root #(Timp) model = new(imp);\n"
-            "      model.pss_root.ctor(base);\n"
-            "      model.pss_root.pss_do_init();") in sv
+    assert ("dma_engine_c_root #(Timp) pss_model = new(pss_imp);\n"
+            "      pss_model.pss_root.ctor(base);\n"
+            "      pss_model.pss_root.pss_do_init();") in sv
     # no separate impl / adapter / factory classes
     assert "_impl" not in sv
     assert "_imp_adapter_c" not in sv

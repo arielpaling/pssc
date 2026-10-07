@@ -22,6 +22,7 @@ docs/design/op-model-c-embedded-design.md (§4).
 from __future__ import annotations
 
 import dataclasses as dc
+import re
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Set
 
 import zuspec.ir.core as ir
@@ -32,6 +33,7 @@ from ..progseq_model import (
 )
 from .lower_reg_model import (accessor_base, c_struct_name, _prim_bits,
                              map_type_name)
+from .c_names import BUS, HANDLE, RESERVED
 from .mem_access import DEFAULT as DEFAULT_MEM, MemAccess
 from .style import coerce as _style
 from ..body_walker import (BodyWalker, CallDispatch, match_values,
@@ -69,7 +71,9 @@ _C_KEYWORDS = frozenset({
 
 
 def mangle(name: str) -> str:
-    return name + "_" if name in _C_KEYWORDS else name
+    """A PSS name as C spells it: a C keyword, or a name the generated code
+    takes for itself (`c_names.RESERVED`), gets a trailing `_`."""
+    return name + "_" if name in _C_KEYWORDS or name in RESERVED else name
 
 
 def _c_int_literal(v: int, width: int) -> str:
@@ -512,7 +516,7 @@ def _member_decl(f) -> str:
     return f"{c_type(dt)} {mangle(f.name)};"
 
 
-def _field_defaults(comp, target: str = "self") -> List[str]:
+def _field_defaults(comp, target: str = HANDLE) -> List[str]:
     """PSS field initializers, as assignments in `_init`.
 
     A default is part of a field's MEANING, not a convenience:
@@ -523,7 +527,7 @@ def _field_defaults(comp, target: str = "self") -> List[str]:
 
     Emitted as assignments rather than as a designated initializer because
     `_init` writes into caller-supplied storage: the caller's struct may be a
-    static whose other members are already set, and `*self = (T){...}` would
+    static whose other members are already set, and `*_self = (T){...}` would
     clear them.
     """
     out: List[str] = []
@@ -620,7 +624,7 @@ def emit_handle(node, prefixes, link_style: str = "vtable",
         # sub-component's register accessors call pssc_bus(s) with ITS handle,
         # and reaching the root's copy would need the parent back-pointer §4.1
         # rules out. One pointer per channel is the cheaper of the two.
-        lines.append("    const pssc_mem_if *bus;")
+        lines.append(f"    const pssc_mem_if *{BUS};")
     for g in group_fields(comp):
         lines.append(f"    pssc_addr_t {style.group_base(g)};")
     if reg_map:
@@ -682,7 +686,7 @@ def _bus_macro(link_style: str, mem: MemAccess = None,
         f"/* {macro}(s): the seam's first argument -- "
         f"the ONLY line varying by style. */"]
     if link_style == "vtable":
-        lines.append(f"#define {macro}(s) ((s)->bus)")
+        lines.append(f"#define {macro}(s) ((s)->{BUS})")
     else:
         lines.append(f"#define {macro}(s) ((void)(s), (const void *)0)")
     return lines
@@ -708,12 +712,12 @@ def _sub_accessors(node, prefixes, style=None) -> List[str]:
                 f"#define {style.macro(parent, mangle(sub.name) + '_COUNT')} "
                 f"{sub.size}u")
             out.append(
-                f"static inline {sub_t} *{name}({parent_t} *s, unsigned i) "
-                f"{{ return &s->{mangle(sub.name)}[i]; }}")
+                f"static inline {sub_t} *{name}({parent_t} *{HANDLE}, unsigned i) "
+                f"{{ return &{HANDLE}->{mangle(sub.name)}[i]; }}")
         else:
             out.append(
-                f"static inline {sub_t} *{name}({parent_t} *s) "
-                f"{{ return &s->{mangle(sub.name)}; }}")
+                f"static inline {sub_t} *{name}({parent_t} *{HANDLE}) "
+                f"{{ return &{HANDLE}->{mangle(sub.name)}; }}")
     return out
 
 
@@ -752,7 +756,7 @@ def _op_signature(fn, prefix: str, type_name: str, qual: str = "",
     style = _style(style)
     ret = c_type(fn.returns) if fn.returns is not None else "void"
     return (f"{qual}{ret} {style.symbol(prefix, mangle(fn.name))}"
-            f"({style.type_name(type_name)} *s{_op_params(fn)})")
+            f"({style.type_name(type_name)} *{HANDLE}{_op_params(fn)})")
 
 
 # --- the import surface (C4.1) ---------------------------------------------
@@ -809,7 +813,7 @@ def lower_imports(imports: Dict[str, object]) -> str:
 def _create_params(ctor, link_style: str) -> str:
     parts = []
     if link_style == "vtable":
-        parts.append("const pssc_mem_if *bus")
+        parts.append(f"const pssc_mem_if *{BUS}")
     if ctor is not None:
         parts += [f"{c_type(a.annotation)} {mangle(a.arg)}" for a in ctor.args.args]
     return ", ".join(parts)
@@ -1044,7 +1048,7 @@ class _BodyEmitter(CIntSemantics, CallDispatch, BodyWalker):
 
     def __init__(self, fn, comp, prefix: str, reg_style: str = "bitfields",
                  yield_mode: str = "none", match_default: str = "message",
-                 message_style: str = "import", handle: str = "s",
+                 message_style: str = "import", handle: str = HANDLE,
                  prefixes=None, link_style: str = "vtable", imports=None,
                  mem: MemAccess = None, style=None, accs=None,
                  ctor_names=None, reg_map: bool = False, ctx=None):
@@ -1075,10 +1079,8 @@ class _BodyEmitter(CIntSemantics, CallDispatch, BodyWalker):
         self.yield_mode = yield_mode
         self.match_default = match_default
         self.message_style = message_style
-        #: Name of the handle parameter in the emitted signature. Operations
-        #: take `s`; `_init` takes `self` (the design's spelling, and the one a
-        #: caller reads first). The bodies are otherwise identical, so this is a
-        #: parameter rather than two emitters.
+        #: Name of the handle parameter in the emitted signature: `HANDLE`,
+        #: for an operation and `_init` alike.
         self.h = handle
         self.prefixes = prefixes
         self.link_style = link_style
@@ -1993,7 +1995,7 @@ class _CtorMixin:
             # The child gets the parent's bus. This is the ONE piece of state
             # that flows down the tree, and it flows at construction so no
             # operation ever has to walk anywhere to find it.
-            fwd.append(f"{self.h}->bus")
+            fwd.append(f"{self.h}->{BUS}")
         fwd += [self.expr(a) for a in call.args]
         return (f"{self.style.symbol(sub_prefix, 'init')}("
                 + ", ".join(fwd) + ")")
@@ -2083,11 +2085,11 @@ def _sig_all(node, prefixes, link_style: str, qual: str, is_root: bool,
     ctor = _ctor(comp, ctor_names)
     cp = _create_params(ctor, link_style)
     sig_params = f", {cp}" if cp else ""
-    out = [f"{qual}void {sym(prefix, 'init')}({prefix_t} *self{sig_params});"]
+    out = [f"{qual}void {sym(prefix, 'init')}({prefix_t} *{HANDLE}{sig_params});"]
     if is_root and lifecycle == "malloc":
         out.append(
             f"{qual}{prefix_t} *{sym(prefix, 'create')}({cp or 'void'});")
-        out.append(f"{qual}void {sym(prefix, 'destroy')}({prefix_t} *self);")
+        out.append(f"{qual}void {sym(prefix, 'destroy')}({prefix_t} *{HANDLE});")
     for fn in _operations(comp, ctor_names):
         # On the prototype, which is the API surface a caller reads. Repeated
         # on the definition below, which is what someone debugging reads --
@@ -2136,9 +2138,9 @@ def _lifecycle_impl(node, prefixes, link_style: str, qual: str,
     cp = _create_params(ctor, link_style)
     sig_params = f", {cp}" if cp else ""
 
-    lines = [f"{qual}void {sym(prefix, 'init')}({prefix_t} *self{sig_params}) {{"]
+    lines = [f"{qual}void {sym(prefix, 'init')}({prefix_t} *{HANDLE}{sig_params}) {{"]
     if link_style == "vtable":
-        lines.append("    self->bus = bus;")
+        lines.append(f"    {HANDLE}->{BUS} = {BUS};")
     # THE IMPLICIT BINDING (`group_binding`): a component with one register
     # group and a constructor that binds none binds it to the constructor's
     # first address parameter. `src/pssc/testing/models` declares
@@ -2149,21 +2151,21 @@ def _lifecycle_impl(node, prefixes, link_style: str, qual: str,
     implicit = group_binding.bindings([comp], ctor_names)[id(comp)].implicit
     if implicit is not None:
         g, arg = implicit
-        base = f"self->{style.group_base(g)}"
+        base = f"{HANDLE}->{style.group_base(g)}"
         lines.append(f"    {base} = {mangle(arg)};")
         if reg_map:
             # The one cast in the generated driver, and it is here (or at a
             # `set_handle`) rather than at every access for that reason.
             gf = next(f for f in comp.fields if f.name == g)
             mt = map_type_name(gf.datatype, style)
-            lines.append(f"    self->{mangle(g)} = ({mt} *)(uintptr_t){base};")
+            lines.append(f"    {HANDLE}->{mangle(g)} = ({mt} *)(uintptr_t){base};")
     for f in channel_fields(comp):
-        lines.append(f"    pssc_chan1_init(&self->{mangle(f.name)});")
+        lines.append(f"    pssc_chan1_init(&{HANDLE}->{mangle(f.name)});")
     lines += _field_defaults(comp)
     if ctor is not None:
         ctor_cls = ctor_emitter_cls(emitter_cls or _BodyEmitter)
         be = ctor_cls(ctor, comp, prefix, reg_style=reg_style,
-                      handle="self", prefixes=prefixes,
+                      handle=HANDLE, prefixes=prefixes,
                       link_style=link_style, style=style,
                       ctor_names=ctor_names, reg_map=reg_map, **be_kw)
         lines += be.stmts(ctor.body, 1)
@@ -2175,20 +2177,22 @@ def _lifecycle_impl(node, prefixes, link_style: str, qual: str,
     # one object whose size is known at compile time. The caller supplies the
     # storage instead -- `static wb_dma_t dma; wb_dma_init(&dma, ...)`.
     if is_root and lifecycle == "malloc":
-        fwd = (["bus"] if link_style == "vtable" else []) + \
+        fwd = ([BUS] if link_style == "vtable" else []) + \
               ([mangle(a.arg) for a in ctor.args.args] if ctor else [])
         fwd_s = ", ".join(fwd)
         lines.append(
             f"{qual}{prefix_t} *{sym(prefix, 'create')}({cp or 'void'}) {{")
         lines.append(
-            f"    {prefix_t} *self = ({prefix_t} *)malloc(sizeof({prefix_t}));")
+            f"    {prefix_t} *{HANDLE} = "
+            f"({prefix_t} *)malloc(sizeof({prefix_t}));")
         init_args = f", {fwd_s}" if fwd_s else ""
-        lines.append(f"    if (self) {sym(prefix, 'init')}(self{init_args});")
-        lines.append("    return self;")
+        lines.append(f"    if ({HANDLE}) "
+                     f"{sym(prefix, 'init')}({HANDLE}{init_args});")
+        lines.append(f"    return {HANDLE};")
         lines.append("}")
         lines.append(
-            f"{qual}void {sym(prefix, 'destroy')}({prefix_t} *self) "
-            f"{{ free(self); }}")
+            f"{qual}void {sym(prefix, 'destroy')}({prefix_t} *{HANDLE}) "
+            f"{{ free({HANDLE}); }}")
     return lines
 
 
@@ -2242,14 +2246,15 @@ def lower_operation(fn, ctx: OpCtx) -> List[str]:
     # edit that started using a member would silently change every
     # caller's call.
     # Code only: the body now carries the PSS source's prose, and a
-    # comment that mentions `s->` would make an operation that never
-    # touches the handle look as though it did -- reinstating the
-    # -Wunused-parameter error this suppresses.
+    # comment that mentions the handle would make an operation that never
+    # touches it look as though it did -- reinstating the
+    # -Wunused-parameter error this suppresses. A user name is never
+    # `HANDLE` (`mangle`), so a whole-word match is a use of the handle.
     code = [ln for ln in body
             if not ln.lstrip().startswith(("/*", "*", "//"))]
-    if not any("s->" in ln or "pssc_bus(s)" in ln or "(s," in ln or  # seam-ok: reads emitted text
-               "(s)" in ln or "&s->" in ln for ln in code):
-        lines.append("    (void)s;")
+    used = re.compile(rf"\b{HANDLE}\b")
+    if not any(used.search(ln) for ln in code):
+        lines.append(f"    (void){HANDLE};")
     lines += body
     lines.append("}")
     return lines

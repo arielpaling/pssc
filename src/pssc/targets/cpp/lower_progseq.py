@@ -93,8 +93,13 @@ CPP_BUILTINS = frozenset({
 }) | _MEM_PRIMS
 
 
+#: Names the generated code takes in a scope a model's names share: the
+#: factory's platform parameter and its local.
+_RESERVED = frozenset({"_imp", "_self"})
+
+
 def mangle(name: str) -> str:
-    return name + "_" if name in _CPP_KEYWORDS else name
+    return name + "_" if name in _CPP_KEYWORDS or name in _RESERVED else name
 
 
 def parse_class_map(spec) -> Dict[str, str]:
@@ -1682,13 +1687,15 @@ def _emit_factory(cls: str, ns: str, ctor) -> List[str]:
     the caller naming the implementation.
     """
     params = _params(ctor) if ctor is not None else ""
-    all_params = f"{ns}_import_if &imp" + (f", {params}" if params else "")
+    # `_imp` and `_self`, as C names its handle: a root constructor parameter
+    # `imp` or `self` was declared twice. `mangle` renames a model's own.
+    all_params = f"{ns}_import_if &_imp" + (f", {params}" if params else "")
     fwd = ", ".join(mangle(a.arg) for a in (ctor.args.args if ctor else []))
     return [
         f"    static std::unique_ptr<{cls}_if> create({all_params}) {{",
-        f"        auto self = std::make_unique<{cls}>(imp);",
-        f"        self->initialize({fwd});",
-        f"        return self;",
+        f"        auto _self = std::make_unique<{cls}>(_imp);",
+        f"        _self->initialize({fwd});",
+        f"        return _self;",
         f"    }}",
     ]
 

@@ -122,10 +122,10 @@ def test_two_compiles_do_not_interfere(tmp_path):
     # the thing that breaks when it is misclassified.
     a = (tmp_path / "a" / "a_pkg.sv").read_text()
     b = (tmp_path / "b" / "b_pkg.sv").read_text()
-    assert "create(Timp imp);" in a, (
+    assert "create(Timp pss_imp);" in a, (
         "with --ctor-name ctor, `init` is an ordinary solve function and the "
         "factory takes no base address")
-    assert "create(Timp imp, addr_handle_t base);" in b, (
+    assert "create(Timp pss_imp, addr_handle_t base);" in b, (
         "the previous compile's --ctor-name leaked into this one: `init` was "
         "not recognised as the constructor")
 

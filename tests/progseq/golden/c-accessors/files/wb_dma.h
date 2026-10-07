@@ -124,7 +124,7 @@ typedef struct {
  * run drives the core through the end-to-end wrappers.
  */
 typedef struct wb_dma_ch_c {
-    const pssc_mem_if *bus;
+    const pssc_mem_if *_bus;
     pssc_addr_t base_regs;
     /*
      * Which channel this is, in ``dma_req_i``/``dma_ack_o`` and INT_SRC bit
@@ -173,7 +173,7 @@ typedef struct wb_dma_ch_c {
  *   on the far interface; omitted by review decision.
  */
 typedef struct wb_dma_c {
-    const pssc_mem_if *bus;
+    const pssc_mem_if *_bus;
     pssc_addr_t base_regs;
     /*
      * How many channels this instance actually uses.
@@ -196,16 +196,16 @@ typedef struct wb_dma_c {
 } wb_dma_c;
 
 /* pssc_bus(s): the seam's first argument -- the ONLY line varying by style. */
-#define pssc_bus(s) ((s)->bus)
+#define pssc_bus(s) ((s)->_bus)
 
 /* ----- Sub-component access. ----- */
 #define WB_DMA_CH_COUNT 4u
-static inline wb_dma_ch_c *wb_dma_ch(wb_dma_c *s, unsigned i) { return &s->ch[i]; }
+static inline wb_dma_ch_c *wb_dma_ch(wb_dma_c *_self, unsigned i) { return &_self->ch[i]; }
 
 /* ----- Export API + lifecycle. ----- */
-void wb_dma_init(wb_dma_c *self, const pssc_mem_if *bus, pssc_addr_t base);
-wb_dma_c *wb_dma_create(const pssc_mem_if *bus, pssc_addr_t base);
-void wb_dma_destroy(wb_dma_c *self);
+void wb_dma_init(wb_dma_c *_self, const pssc_mem_if *_bus, pssc_addr_t base);
+wb_dma_c *wb_dma_create(const pssc_mem_if *_bus, pssc_addr_t base);
+void wb_dma_destroy(wb_dma_c *_self);
 
 /*
  * Route a set of channels to one of the two aggregate interrupt outputs.
@@ -228,7 +228,7 @@ void wb_dma_destroy(wb_dma_c *self);
  * :param bank:         which aggregate output to program
  * :param channel_mask: bit N routes channel N
  */
-void wb_dma_configure_interrupt_routing(wb_dma_c *s, wb_dma_int_bank_e bank, uint32_t channel_mask);
+void wb_dma_configure_interrupt_routing(wb_dma_c *_self, wb_dma_int_bank_e bank, uint32_t channel_mask);
 
 /*
  * Pause or un-pause the whole engine, and wait until it has taken effect.
@@ -250,7 +250,7 @@ void wb_dma_configure_interrupt_routing(wb_dma_c *s, wb_dma_int_bank_e bank, uin
  *
  * :param pause: 1 to pause, 0 to resume
  */
-void wb_dma_pause_engine(wb_dma_c *s, uint8_t pause);
+void wb_dma_pause_engine(wb_dma_c *_self, uint8_t pause);
 
 /*
  * Read back how much of a descriptor's transfer actually moved.
@@ -271,7 +271,7 @@ void wb_dma_pause_engine(wb_dma_c *s, uint8_t pause);
  *
  * :param desc_ptr: the descriptor whose control word is read back
  */
-uint16_t wb_dma_read_descriptor_residual(wb_dma_c *s, pssc_addr_t desc_ptr);
+uint16_t wb_dma_read_descriptor_residual(wb_dma_c *_self, pssc_addr_t desc_ptr);
 
 /*
  * Write one external descriptor into memory and link it to its predecessor.
@@ -295,9 +295,9 @@ uint16_t wb_dma_read_descriptor_residual(wb_dma_c *s, pssc_addr_t desc_ptr);
  * :param prev: the descriptor to link from; null/zero means "head of list"
  * :param desc: the descriptor contents; the caller's copy is not modified
  */
-pssc_addr_t wb_dma_write_descriptor(wb_dma_c *s, pssc_addr_t at, pssc_addr_t prev, wb_dma_desc_s desc);
+pssc_addr_t wb_dma_write_descriptor(wb_dma_c *_self, pssc_addr_t at, pssc_addr_t prev, wb_dma_desc_s desc);
 
-void wb_dma_ch_init(wb_dma_ch_c *self, const pssc_mem_if *bus, int id, pssc_addr_t bank);
+void wb_dma_ch_init(wb_dma_ch_c *_self, const pssc_mem_if *_bus, int id, pssc_addr_t bank);
 
 /*
  * Block until the operation running on this channel reaches a terminal state.
@@ -356,7 +356,7 @@ void wb_dma_ch_init(wb_dma_ch_c *self, const pssc_mem_if *bus, int id, pssc_addr
  *    spins -- the routing requirement belongs to the wait primitive, not to
  *    this operation.
  */
-wb_dma_status_e wb_dma_ch_wait_completion(wb_dma_ch_c *s);
+wb_dma_status_e wb_dma_ch_wait_completion(wb_dma_ch_c *_self);
 
 /*
  * Run one transfer to completion and report how it ended.
@@ -384,7 +384,7 @@ wb_dma_status_e wb_dma_ch_wait_completion(wb_dma_ch_c *s);
  *
  * :param cfg: what to program before arming
  */
-wb_dma_status_e wb_dma_ch_transfer_single(wb_dma_ch_c *s, wb_dma_ch_cfg_s cfg);
+wb_dma_status_e wb_dma_ch_transfer_single(wb_dma_ch_c *_self, wb_dma_ch_cfg_s cfg);
 
 /*
  * Run a descriptor chain to completion and report how it ended.
@@ -408,7 +408,7 @@ wb_dma_status_e wb_dma_ch_transfer_single(wb_dma_ch_c *s, wb_dma_ch_cfg_s cfg);
  * :param head: head of the descriptor chain, as returned when the list was
  *              built; must be reachable from interface 0
  */
-wb_dma_status_e wb_dma_ch_transfer_list(wb_dma_ch_c *s, pssc_addr_t head);
+wb_dma_status_e wb_dma_ch_transfer_list(wb_dma_ch_c *_self, pssc_addr_t head);
 
 /*
  * Abort whatever is running on this channel and wait for the abort to land.
@@ -435,7 +435,7 @@ wb_dma_status_e wb_dma_ch_transfer_list(wb_dma_ch_c *s, pssc_addr_t head);
  * See ``stop_channel_start()`` for what that sharing costs -- which read
  * consumes the ERR is not determined by this model -- and for open item §6.5.
  */
-wb_dma_status_e wb_dma_ch_stop_channel(wb_dma_ch_c *s);
+wb_dma_status_e wb_dma_ch_stop_channel(wb_dma_ch_c *_self);
 
 /*
  * Poll whether the operation running on this channel has finished.
@@ -486,7 +486,7 @@ wb_dma_status_e wb_dma_ch_stop_channel(wb_dma_ch_c *s);
  *    PENDING instead, because the state needed for an honest answer was
  *    consumed by whoever broke the rule.
  */
-wb_dma_status_e wb_dma_ch_check_completion(wb_dma_ch_c *s);
+wb_dma_status_e wb_dma_ch_check_completion(wb_dma_ch_c *_self);
 
 /*
  * Program a channel's registers from a config, without arming it.
@@ -508,7 +508,7 @@ wb_dma_status_e wb_dma_ch_check_completion(wb_dma_ch_c *s);
  * :param cfg: what to program; capability-gated fields are skipped when the
  *             channel was built without the capability
  */
-void wb_dma_ch_configure_channel(wb_dma_ch_c *s, wb_dma_ch_cfg_s cfg);
+void wb_dma_ch_configure_channel(wb_dma_ch_c *_self, wb_dma_ch_cfg_s cfg);
 
 /*
  * Decode one read of CHn_CSR into a status. The unguarded primitive both
@@ -542,7 +542,7 @@ void wb_dma_ch_configure_channel(wb_dma_ch_c *s, wb_dma_ch_cfg_s cfg);
  *    past the guard opts out of the only detector for the read-to-clear
  *    hazard, and the read is a side effect every time.
  */
-wb_dma_status_e wb_dma_ch_probe_status(wb_dma_ch_c *s);
+wb_dma_status_e wb_dma_ch_probe_status(wb_dma_ch_c *_self);
 
 /*
  * Set or clear the channel's auto-restart bit.
@@ -568,7 +568,7 @@ wb_dma_status_e wb_dma_ch_probe_status(wb_dma_ch_c *s);
  * :param enable: 1 to auto-restart on completion, 0 to stop after the
  *                current iteration
  */
-void wb_dma_ch_set_auto_restart(wb_dma_ch_c *s, uint8_t enable);
+void wb_dma_ch_set_auto_restart(wb_dma_ch_c *_self, uint8_t enable);
 
 /*
  * Publish how far a software reader has drained a FIFO in memory.
@@ -592,7 +592,7 @@ void wb_dma_ch_set_auto_restart(wb_dma_ch_c *s, uint8_t enable);
  * :param ptr:    the new software pointer
  * :param enable: whether the pointer is honoured at all
  */
-void wb_dma_ch_set_software_pointer(wb_dma_ch_c *s, uint32_t ptr, uint8_t enable);
+void wb_dma_ch_set_software_pointer(wb_dma_ch_c *_self, uint32_t ptr, uint8_t enable);
 
 /*
  * Write STOP to abort whatever is running on this channel, and return.
@@ -636,7 +636,7 @@ void wb_dma_ch_set_software_pointer(wb_dma_ch_c *s, uint32_t ptr, uint8_t enable
  *    the current WISHBONE cycle retires? That decides whether an abort can
  *    be considered delivered on return, which matters post-silicon.
  */
-void wb_dma_ch_stop_channel_start(wb_dma_ch_c *s);
+void wb_dma_ch_stop_channel_start(wb_dma_ch_c *_self);
 
 /*
  * Point a channel at a descriptor list and arm it, returning with the chain
@@ -668,7 +668,7 @@ void wb_dma_ch_stop_channel_start(wb_dma_ch_c *s);
  * :param head: head of the descriptor chain; must be reachable from
  *              interface 0
  */
-void wb_dma_ch_transfer_list_start(wb_dma_ch_c *s, pssc_addr_t head);
+void wb_dma_ch_transfer_list_start(wb_dma_ch_c *_self, pssc_addr_t head);
 
 /*
  * Program a channel and arm it, returning with the transfer running.
@@ -704,7 +704,7 @@ void wb_dma_ch_transfer_list_start(wb_dma_ch_c *s, pssc_addr_t head);
  *
  * :param cfg: what to program before arming
  */
-void wb_dma_ch_transfer_single_start(wb_dma_ch_c *s, wb_dma_ch_cfg_s cfg);
+void wb_dma_ch_transfer_single_start(wb_dma_ch_c *_self, wb_dma_ch_cfg_s cfg);
 
 /*
  * Wait until the device may have progressed.
@@ -745,6 +745,6 @@ void wb_dma_ch_transfer_single_start(wb_dma_ch_c *s, wb_dma_ch_cfg_s cfg);
  *    would deadlock the one caller that has no interrupt to wait for. The
  *    contract is stated in full in ``docs/op-model-export-design.md`` §4.4.
  */
-void wb_dma_ch_wait_hint(wb_dma_ch_c *s);
+void wb_dma_ch_wait_hint(wb_dma_ch_c *_self);
 
 #endif /* WB_DMA_H */

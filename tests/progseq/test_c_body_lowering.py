@@ -82,7 +82,7 @@ component probe_c {
 def test_component_member_reaches_c_through_the_handle(tmp_path):
     _, impl, _ = _generate(tmp_path, _SELF_MEMBER)
     assert_c(impl,
-             has=["s->scale * x"],
+             has=["_self->scale * x"],
              # The defect's output. `scale * x` compiles anywhere a `scale` is
              # in scope -- an unrelated file-scope object, or a parameter of
              # the caller -- and silently computes with it.
@@ -100,7 +100,7 @@ def test_a_bare_member_name_never_survives(tmp_path):
     body = impl.split("probe_scaled")[-1]
     assert "scale" in body                      # the test is not vacuous
     for occurrence in body.split("scale")[:-1]:
-        assert occurrence.endswith("s->"), \
+        assert occurrence.endswith("_self->"), \
             f"unqualified member reference in: {body}"
 
 
@@ -217,7 +217,7 @@ component probe_c {
 def test_foreach_becomes_a_bounded_for(tmp_path):
     _, impl, _ = _generate(tmp_path, _FOREACH)
     assert_c(impl,
-             has=["for (unsigned i = 0; i < 4u; i++) {", "s->vals[i]"],
+             has=["for (unsigned i = 0; i < 4u; i++) {", "_self->vals[i]"],
              # An unbounded loop, or one whose bound came from nowhere.
              has_not=["i < 0u", "i < -1", "foreach"])
 
@@ -299,8 +299,8 @@ def test_enum_typed_argument_is_the_enum_type(tmp_path):
     """The blocker `src/pss/flow.yaml` recorded verbatim: the first enum-typed
     operation argument raised `unsupported C type for DataTypeEnum`."""
     hdr, _, _ = _generate(tmp_path, _MATCH)
-    assert_c(hdr, has=["probe_f(probe_c *s, colour_e c)"],
-             has_not=["probe_f(probe_c *s, int c)"])
+    assert_c(hdr, has=["probe_f(probe_c *_self, colour_e c)"],
+             has_not=["probe_f(probe_c *_self, int c)"])
 
 
 # --- C0.7: built-in calls ---------------------------------------------------
@@ -322,7 +322,7 @@ component probe_c {
 def test_memory_primitives_reach_the_seam(tmp_path):
     _, impl, _ = _generate(tmp_path, _BUILTINS)
     assert_c(impl,
-             has=["pssc_r32(pssc_bus(s), at)", "pssc_w32(pssc_bus(s), "],
+             has=["pssc_r32(pssc_bus(_self), at)", "pssc_w32(pssc_bus(_self), "],
              # Verbatim emission: C naming a function nothing declares. It is
              # what the registry in targets/call_legality.py exists to prevent.
              has_not=["read32(at)", "write32(", "= read32"])

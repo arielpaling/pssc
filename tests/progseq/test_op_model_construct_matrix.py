@@ -182,6 +182,49 @@ component pss_top {""" + _ONE + """
   }
 }""", ["write 32 0x1004 0x5"]),
 
+    # C named the handle parameter `s` (`self` in `_init`) and its bus pointer
+    # `bus`, so a model's own `s` was declared twice: `x_f(x_c *s, x_s s)`.
+    # The generated names are now `_self`/`_bus`, and a model's `_self` is
+    # renamed like a C keyword.
+    "names the generated code also uses": Case("""
+component leaf_c {
+  ga_c a;
+  bit[32] bus;
+  bit[32] _bus;
+  solve function void initialize(addr_handle_t self, bit[32] _self) {
+    a.set_handle(self);
+    bus = _self;
+    _bus = _self + 1;
+  }
+  target function bit[32] f(bit[32] s, bit[32] _self) {
+    bit[32] self = s + _self;
+    bit[32] _bus = self + bus;
+    return _bus + this._bus;
+  }
+  target function void poke(bit[32] s) { a.STS.write_val(f(s, 1)); }
+}
+component pss_top {
+  leaf_c s;
+  solve function void initialize(addr_handle_t base) {
+    s.initialize(base, 0x10);
+  }
+  target function void run() { s.poke(2); }
+}""", ["write 32 0x1004 0x24"]),
+
+    # ...and the ROOT's constructor parameters, which every target forwards
+    # from a factory that takes the platform (`imp`, `imports`, `_bus`).
+    "root constructor parameters named like generated ones": Case("""
+component pss_top {
+  ga_c a;
+  bit[32] k;
+  solve function void initialize(addr_handle_t imp, bit[32] self,
+                                 bit[32] imports, bit[32] bus) {
+    a.set_handle(imp);
+    k = self + imports + bus;
+  }
+  target function void run() { a.STS.write_val(k); }
+}""", ["write 32 0x1004 0x7"], args=(0x1000, 1, 2, 4)),
+
     # --- D2: operations of a sub-component -------------------------------------
     "calling a sub-component's operation": Case("""
 component sub_c {

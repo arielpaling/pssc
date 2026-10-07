@@ -1611,10 +1611,10 @@ public:
 
     wb_dma_ch_c_if &ch(std::size_t i) override { return ch_[i]; }
 
-    static std::unique_ptr<wb_dma_c_if> create(wb_dma_import_if &imp, pssc::addr_t base) {
-        auto self = std::make_unique<wb_dma_c>(imp);
-        self->initialize(base);
-        return self;
+    static std::unique_ptr<wb_dma_c_if> create(wb_dma_import_if &_imp, pssc::addr_t base) {
+        auto _self = std::make_unique<wb_dma_c>(_imp);
+        _self->initialize(base);
+        return _self;
     }
 };
 

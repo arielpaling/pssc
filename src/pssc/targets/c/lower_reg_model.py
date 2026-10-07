@@ -25,6 +25,7 @@ from ..reg_layout import (collect_accessors, prim_bits as _prim_bits,
                           value_bits as _reg_value_bits, value_struct)
 from ...reg_field_resolve import field_width, struct_layout
 from ..comments import BLOCK, append_trailing, comment_lines
+from .c_names import HANDLE as H
 from .mem_access import DEFAULT as DEFAULT_MEM, MemAccess
 from .style import coerce as _style
 
@@ -230,7 +231,7 @@ def _idx_args(n: int) -> str:
 
 
 def _addr_expr(acc: _Acc) -> str:
-    terms = [f"s->{acc.base_member} + 0x{acc.const_off:x}u"]
+    terms = [f"{H}->{acc.base_member} + 0x{acc.const_off:x}u"]
     for k, stride in enumerate(acc.strides):
         terms.append(f"(pssc_addr_t)i{k} * 0x{stride:x}u")
     return " + ".join(terms)
@@ -261,7 +262,7 @@ def emit_accessor(acc: _Acc, prefix_t: str, mem: MemAccess = None,
     form deliberately: the folded offsets are the model's statement about the
     device, and a style that had to recompute them from `_Acc.const_off` would
     be a supported way to generate firmware pointed at the wrong register. A
-    house macro gets the identity (`acc.base`) AND the address (`<base>_addr(s)`),
+    house macro gets the identity (`acc.base`) AND the address (`<base>_addr(_self)`),
     and computes neither.
     """
     mem = mem or DEFAULT_MEM
@@ -270,26 +271,26 @@ def emit_accessor(acc: _Acc, prefix_t: str, mem: MemAccess = None,
     idx_a = _idx_args(n)
     fn = lambda kind: mem.accessor(acc.base, kind)   # noqa: E731
     kinds = accessor_kinds(acc, addr_only)
-    addr = f"{fn('addr')}(s{idx_a})"
+    addr = f"{fn('addr')}({H}{idx_a})"
     lines = [
-        f"{_SI} pssc_addr_t {fn('addr')}(const {prefix_t} *s{idx_p}) "
+        f"{_SI} pssc_addr_t {fn('addr')}(const {prefix_t} *{H}{idx_p}) "
         f"{{ return {_addr_expr(acc)}; }}",
     ]
     if "read" in kinds:
-        read = mem.read(acc.prim, "s", addr)
+        read = mem.read(acc.prim, H, addr)
         if acc.is_struct:
             lines.append(
-                f"{_SI} {acc.c_type} {fn('read')}({prefix_t} *s{idx_p}) "
+                f"{_SI} {acc.c_type} {fn('read')}({prefix_t} *{H}{idx_p}) "
                 f"{{ {acc.c_type} v; v.raw = {read}; return v; }}")
         else:
             lines.append(
-                f"{_SI} {acc.c_type} {fn('read')}({prefix_t} *s{idx_p}) "
+                f"{_SI} {acc.c_type} {fn('read')}({prefix_t} *{H}{idx_p}) "
                 f"{{ return {read}; }}")
     if "write" in kinds:
         raw = "v.raw" if acc.is_struct else "v"
         lines.append(
-            f"{_SI} void {fn('write')}({prefix_t} *s{idx_p}, {acc.c_type} v) "
-            f"{{ {mem.write(acc.prim, 's', addr, raw)}; }}")
+            f"{_SI} void {fn('write')}({prefix_t} *{H}{idx_p}, {acc.c_type} v) "
+            f"{{ {mem.write(acc.prim, H, addr, raw)}; }}")
 
     # Raw accessors. `_read`/`_write` above are typed -- they hand back the
     # value union -- and the masked forms work in bits, so they need the
@@ -299,12 +300,12 @@ def emit_accessor(acc: _Acc, prefix_t: str, mem: MemAccess = None,
     ut = f"uint{acc.prim}_t"
     if "read_val" in kinds:
         lines.append(
-            f"{_SI} {ut} {fn('read_val')}({prefix_t} *s{idx_p}) "
-            f"{{ return {mem.read(acc.prim, 's', addr)}; }}")
+            f"{_SI} {ut} {fn('read_val')}({prefix_t} *{H}{idx_p}) "
+            f"{{ return {mem.read(acc.prim, H, addr)}; }}")
     if "write_val" in kinds:
         lines.append(
-            f"{_SI} void {fn('write_val')}({prefix_t} *s{idx_p}, {ut} v) "
-            f"{{ {mem.write(acc.prim, 's', addr, 'v')}; }}")
+            f"{_SI} void {fn('write_val')}({prefix_t} *{H}{idx_p}, {ut} v) "
+            f"{{ {mem.write(acc.prim, H, addr, 'v')}; }}")
 
     # The masked write -- PSS 3.1 §21.14.1:
     #
@@ -321,9 +322,9 @@ def emit_accessor(acc: _Acc, prefix_t: str, mem: MemAccess = None,
     # four spellings and no field name is involved.
     if "write_val_masked" in kinds:
         lines.append(
-            f"{_SI} void {fn('write_val_masked')}({prefix_t} *s{idx_p}, "
+            f"{_SI} void {fn('write_val_masked')}({prefix_t} *{H}{idx_p}, "
             f"{ut} mask, {ut} val) "
-            f"{{ {mem.masked_write(ut, acc.base, f's{idx_a}')} }}")
+            f"{{ {mem.masked_write(ut, acc.base, f'{H}{idx_a}')} }}")
     return "\n".join(lines)
 
 

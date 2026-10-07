@@ -73,9 +73,9 @@ def test_c_emits_the_masked_accessor(tmp_path):
     # In the .c: an accessor is implementation, and the masked form is the
     # accessor set's most implementation-ish member -- it exists to spell one
     # PSS statement, not to be called by hand.
-    assert "pss_top_regs_csr_write_masked(pss_top *s, uint32_t mask, uint32_t val)" in body
-    assert "pss_top_regs_csr_write_masked(s, 1, 1);" in body
-    assert "pss_top_regs_csr_write_masked(s, 14, 10);" in body   # prio=5 -> [3:1]
+    assert "pss_top_regs_csr_write_masked(pss_top *_self, uint32_t mask, uint32_t val)" in body
+    assert "pss_top_regs_csr_write_masked(_self, 1, 1);" in body
+    assert "pss_top_regs_csr_write_masked(_self, 14, 10);" in body   # prio=5 -> [3:1]
 
 
 def test_the_c_accessor_reads_before_it_writes(tmp_path):
@@ -84,7 +84,7 @@ def test_the_c_accessor_reads_before_it_writes(tmp_path):
     register whose read clears its status bits."""
     src = (_generate(tmp_path, "c-progseq") / "pss_top.c").read_text()
     acc = [ln for ln in src.splitlines() if "_write_masked(" in ln][0]
-    assert "_read_val(s)" in acc
+    assert "_read_val(_self)" in acc
     assert "(cur & ~mask) | (val & mask)" in acc
 
 

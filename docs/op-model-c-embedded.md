@@ -51,7 +51,10 @@ TYPE=NAME` renames a component's type AND its functions; it is how two
 components with one name in different packages are told apart. C has one
 namespace for all of these, so a model in which two of them come out the same
 -- a sub-component named `create` beside the root's `wb_dma_create` -- is
-refused, naming both.
+refused, naming both. Every function takes the component handle as `_self`
+(`wb_dma_start(wb_dma_c *_self, ...)`) and `_init` takes the bus as `_bus`;
+a model parameter or local spelled either way is renamed `_self_`, as a C
+keyword is.
 
 Every operation the model declares is present. There is no reduced "firmware
 subset": the end-to-end operations exist here exactly as they do in the

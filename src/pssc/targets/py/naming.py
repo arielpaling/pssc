@@ -79,14 +79,21 @@ def field_storage(decl_name: str, field: str) -> str:
     return f"_pss_{decl_name.replace('::', '__')}_{field}"
 
 
+#: Parameter names a generated method takes besides the model's: every method's
+#: `self`, and a constructor's `imports`.
+RESERVED = frozenset({"self", "imports"})
+
+
 def mangle(name: str) -> str:
     """A PSS name as a Python identifier.
 
-    Only keywords are rewritten, with a trailing underscore -- PEP 8's own
+    Keywords are rewritten with a trailing underscore -- PEP 8's own
     convention for exactly this, so `class` becomes `class_` and a reader knows
-    why. PSS's identifier syntax is otherwise a subset of Python's.
+    why. PSS's identifier syntax is otherwise a subset of Python's. So are the
+    parameter names generated methods take for themselves (`RESERVED`): a PSS
+    parameter `self` was a duplicate argument.
     """
-    return name + "_" if keyword.iskeyword(name) else name
+    return name + "_" if keyword.iskeyword(name) or name in RESERVED else name
 
 
 def strip_suffix(name: str, suffix: str = "_c") -> str:

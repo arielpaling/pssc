@@ -2135,14 +2135,18 @@ def emit_factory(model) -> str:
         f"      {ROOT_MEMBER} = new(this);",
         "    endfunction",
         "",
-        f"    static function {ctxt_if_name(root)} create(Timp imp{params});",
-        f"      {name} #(Timp) model = new(imp);",
+        # The factory's own names take the `pss_` prefix, like every other
+        # generated name: a root constructor parameter `imp` was declared twice.
+        f"    static function {ctxt_if_name(root)} create(Timp {IMP_MEMBER}"
+        f"{params});",
+        f"      {name} #(Timp) pss_model = new({IMP_MEMBER});",
     ]
     if ctor is not None:
-        lines.append(f"      model.{ROOT_MEMBER}.{mangle(ctor.name)}({fwd});")
+        lines.append(
+            f"      pss_model.{ROOT_MEMBER}.{mangle(ctor.name)}({fwd});")
     lines += [
-        f"      model.{ROOT_MEMBER}.pss_do_init();",
-        "      return model;",
+        f"      pss_model.{ROOT_MEMBER}.pss_do_init();",
+        "      return pss_model;",
         "    endfunction",
     ]
 

@@ -295,12 +295,12 @@ typedef struct wb_dma_c {
 
 /* ----- Sub-component access. ----- */
 #define WB_DMA_CH_COUNT 4u
-static inline wb_dma_ch_c *wb_dma_ch(wb_dma_c *s, unsigned i) { return &s->ch[i]; }
+static inline wb_dma_ch_c *wb_dma_ch(wb_dma_c *_self, unsigned i) { return &_self->ch[i]; }
 
 /* ----- Export API + lifecycle. ----- */
-static inline void wb_dma_init(wb_dma_c *self, pssc_addr_t base);
+static inline void wb_dma_init(wb_dma_c *_self, pssc_addr_t base);
 static inline wb_dma_c *wb_dma_create(pssc_addr_t base);
-static inline void wb_dma_destroy(wb_dma_c *self);
+static inline void wb_dma_destroy(wb_dma_c *_self);
 
 /*
  * Route a set of channels to one of the two aggregate interrupt outputs.
@@ -323,7 +323,7 @@ static inline void wb_dma_destroy(wb_dma_c *self);
  * :param bank:         which aggregate output to program
  * :param channel_mask: bit N routes channel N
  */
-static inline void wb_dma_configure_interrupt_routing(wb_dma_c *s, wb_dma_int_bank_e bank, uint32_t channel_mask);
+static inline void wb_dma_configure_interrupt_routing(wb_dma_c *_self, wb_dma_int_bank_e bank, uint32_t channel_mask);
 
 /*
  * Pause or un-pause the whole engine, and wait until it has taken effect.
@@ -345,7 +345,7 @@ static inline void wb_dma_configure_interrupt_routing(wb_dma_c *s, wb_dma_int_ba
  *
  * :param pause: 1 to pause, 0 to resume
  */
-static inline void wb_dma_pause_engine(wb_dma_c *s, uint8_t pause);
+static inline void wb_dma_pause_engine(wb_dma_c *_self, uint8_t pause);
 
 /*
  * Read back how much of a descriptor's transfer actually moved.
@@ -366,7 +366,7 @@ static inline void wb_dma_pause_engine(wb_dma_c *s, uint8_t pause);
  *
  * :param desc_ptr: the descriptor whose control word is read back
  */
-static inline uint16_t wb_dma_read_descriptor_residual(wb_dma_c *s, pssc_addr_t desc_ptr);
+static inline uint16_t wb_dma_read_descriptor_residual(wb_dma_c *_self, pssc_addr_t desc_ptr);
 
 /*
  * Write one external descriptor into memory and link it to its predecessor.
@@ -390,9 +390,9 @@ static inline uint16_t wb_dma_read_descriptor_residual(wb_dma_c *s, pssc_addr_t 
  * :param prev: the descriptor to link from; null/zero means "head of list"
  * :param desc: the descriptor contents; the caller's copy is not modified
  */
-static inline pssc_addr_t wb_dma_write_descriptor(wb_dma_c *s, pssc_addr_t at, pssc_addr_t prev, wb_dma_desc_s desc);
+static inline pssc_addr_t wb_dma_write_descriptor(wb_dma_c *_self, pssc_addr_t at, pssc_addr_t prev, wb_dma_desc_s desc);
 
-static inline void wb_dma_ch_init(wb_dma_ch_c *self, int id, pssc_addr_t bank);
+static inline void wb_dma_ch_init(wb_dma_ch_c *_self, int id, pssc_addr_t bank);
 
 /*
  * Block until the operation running on this channel reaches a terminal state.
@@ -451,7 +451,7 @@ static inline void wb_dma_ch_init(wb_dma_ch_c *self, int id, pssc_addr_t bank);
  *    spins -- the routing requirement belongs to the wait primitive, not to
  *    this operation.
  */
-static inline wb_dma_status_e wb_dma_ch_wait_completion(wb_dma_ch_c *s);
+static inline wb_dma_status_e wb_dma_ch_wait_completion(wb_dma_ch_c *_self);
 
 /*
  * Run one transfer to completion and report how it ended.
@@ -479,7 +479,7 @@ static inline wb_dma_status_e wb_dma_ch_wait_completion(wb_dma_ch_c *s);
  *
  * :param cfg: what to program before arming
  */
-static inline wb_dma_status_e wb_dma_ch_transfer_single(wb_dma_ch_c *s, wb_dma_ch_cfg_s cfg);
+static inline wb_dma_status_e wb_dma_ch_transfer_single(wb_dma_ch_c *_self, wb_dma_ch_cfg_s cfg);
 
 /*
  * Run a descriptor chain to completion and report how it ended.
@@ -503,7 +503,7 @@ static inline wb_dma_status_e wb_dma_ch_transfer_single(wb_dma_ch_c *s, wb_dma_c
  * :param head: head of the descriptor chain, as returned when the list was
  *              built; must be reachable from interface 0
  */
-static inline wb_dma_status_e wb_dma_ch_transfer_list(wb_dma_ch_c *s, pssc_addr_t head);
+static inline wb_dma_status_e wb_dma_ch_transfer_list(wb_dma_ch_c *_self, pssc_addr_t head);
 
 /*
  * Abort whatever is running on this channel and wait for the abort to land.
@@ -530,7 +530,7 @@ static inline wb_dma_status_e wb_dma_ch_transfer_list(wb_dma_ch_c *s, pssc_addr_
  * See ``stop_channel_start()`` for what that sharing costs -- which read
  * consumes the ERR is not determined by this model -- and for open item §6.5.
  */
-static inline wb_dma_status_e wb_dma_ch_stop_channel(wb_dma_ch_c *s);
+static inline wb_dma_status_e wb_dma_ch_stop_channel(wb_dma_ch_c *_self);
 
 /*
  * Poll whether the operation running on this channel has finished.
@@ -581,7 +581,7 @@ static inline wb_dma_status_e wb_dma_ch_stop_channel(wb_dma_ch_c *s);
  *    PENDING instead, because the state needed for an honest answer was
  *    consumed by whoever broke the rule.
  */
-static inline wb_dma_status_e wb_dma_ch_check_completion(wb_dma_ch_c *s);
+static inline wb_dma_status_e wb_dma_ch_check_completion(wb_dma_ch_c *_self);
 
 /*
  * Program a channel's registers from a config, without arming it.
@@ -603,7 +603,7 @@ static inline wb_dma_status_e wb_dma_ch_check_completion(wb_dma_ch_c *s);
  * :param cfg: what to program; capability-gated fields are skipped when the
  *             channel was built without the capability
  */
-static inline void wb_dma_ch_configure_channel(wb_dma_ch_c *s, wb_dma_ch_cfg_s cfg);
+static inline void wb_dma_ch_configure_channel(wb_dma_ch_c *_self, wb_dma_ch_cfg_s cfg);
 
 /*
  * Decode one read of CHn_CSR into a status. The unguarded primitive both
@@ -637,7 +637,7 @@ static inline void wb_dma_ch_configure_channel(wb_dma_ch_c *s, wb_dma_ch_cfg_s c
  *    past the guard opts out of the only detector for the read-to-clear
  *    hazard, and the read is a side effect every time.
  */
-static inline wb_dma_status_e wb_dma_ch_probe_status(wb_dma_ch_c *s);
+static inline wb_dma_status_e wb_dma_ch_probe_status(wb_dma_ch_c *_self);
 
 /*
  * Set or clear the channel's auto-restart bit.
@@ -663,7 +663,7 @@ static inline wb_dma_status_e wb_dma_ch_probe_status(wb_dma_ch_c *s);
  * :param enable: 1 to auto-restart on completion, 0 to stop after the
  *                current iteration
  */
-static inline void wb_dma_ch_set_auto_restart(wb_dma_ch_c *s, uint8_t enable);
+static inline void wb_dma_ch_set_auto_restart(wb_dma_ch_c *_self, uint8_t enable);
 
 /*
  * Publish how far a software reader has drained a FIFO in memory.
@@ -687,7 +687,7 @@ static inline void wb_dma_ch_set_auto_restart(wb_dma_ch_c *s, uint8_t enable);
  * :param ptr:    the new software pointer
  * :param enable: whether the pointer is honoured at all
  */
-static inline void wb_dma_ch_set_software_pointer(wb_dma_ch_c *s, uint32_t ptr, uint8_t enable);
+static inline void wb_dma_ch_set_software_pointer(wb_dma_ch_c *_self, uint32_t ptr, uint8_t enable);
 
 /*
  * Write STOP to abort whatever is running on this channel, and return.
@@ -731,7 +731,7 @@ static inline void wb_dma_ch_set_software_pointer(wb_dma_ch_c *s, uint32_t ptr, 
  *    the current WISHBONE cycle retires? That decides whether an abort can
  *    be considered delivered on return, which matters post-silicon.
  */
-static inline void wb_dma_ch_stop_channel_start(wb_dma_ch_c *s);
+static inline void wb_dma_ch_stop_channel_start(wb_dma_ch_c *_self);
 
 /*
  * Point a channel at a descriptor list and arm it, returning with the chain
@@ -763,7 +763,7 @@ static inline void wb_dma_ch_stop_channel_start(wb_dma_ch_c *s);
  * :param head: head of the descriptor chain; must be reachable from
  *              interface 0
  */
-static inline void wb_dma_ch_transfer_list_start(wb_dma_ch_c *s, pssc_addr_t head);
+static inline void wb_dma_ch_transfer_list_start(wb_dma_ch_c *_self, pssc_addr_t head);
 
 /*
  * Program a channel and arm it, returning with the transfer running.
@@ -799,7 +799,7 @@ static inline void wb_dma_ch_transfer_list_start(wb_dma_ch_c *s, pssc_addr_t hea
  *
  * :param cfg: what to program before arming
  */
-static inline void wb_dma_ch_transfer_single_start(wb_dma_ch_c *s, wb_dma_ch_cfg_s cfg);
+static inline void wb_dma_ch_transfer_single_start(wb_dma_ch_c *_self, wb_dma_ch_cfg_s cfg);
 
 /*
  * Wait until the device may have progressed.
@@ -840,19 +840,19 @@ static inline void wb_dma_ch_transfer_single_start(wb_dma_ch_c *s, wb_dma_ch_cfg
  *    would deadlock the one caller that has no interrupt to wait for. The
  *    contract is stated in full in ``docs/op-model-export-design.md`` §4.4.
  */
-static inline void wb_dma_ch_wait_hint(wb_dma_ch_c *s);
+static inline void wb_dma_ch_wait_hint(wb_dma_ch_c *_self);
 
 /* ----- Component lifecycle + operations. ----- */
 /* --- wb_dma_ch_c --- */
-static inline void wb_dma_ch_init(wb_dma_ch_c *self, int id, pssc_addr_t bank) {
-    pssc_chan1_init(&self->inflight);
-    pssc_chan1_init(&self->wake);
-    self->caps.present = 1;
-    self->caps.ars = 1;
-    self->caps.ed = 1;
-    self->caps.cbuf = 1;
-    self->chan = id;
-    (self->base_regs = bank, self->regs = (wb_dma_ch_regs_c *)(uintptr_t)self->base_regs);
+static inline void wb_dma_ch_init(wb_dma_ch_c *_self, int id, pssc_addr_t bank) {
+    pssc_chan1_init(&_self->inflight);
+    pssc_chan1_init(&_self->wake);
+    _self->caps.present = 1;
+    _self->caps.ars = 1;
+    _self->caps.ed = 1;
+    _self->caps.cbuf = 1;
+    _self->chan = id;
+    (_self->base_regs = bank, _self->regs = (wb_dma_ch_regs_c *)(uintptr_t)_self->base_regs);
 }
 
 /*
@@ -912,15 +912,15 @@ static inline void wb_dma_ch_init(wb_dma_ch_c *self, int id, pssc_addr_t bank) {
  *    spins -- the routing requirement belongs to the wait primitive, not to
  *    this operation.
  */
-static inline wb_dma_status_e wb_dma_ch_wait_completion(wb_dma_ch_c *s) {
+static inline wb_dma_status_e wb_dma_ch_wait_completion(wb_dma_ch_c *_self) {
     wb_dma_status_e status;
     uint64_t tok;   /* PSS: uint8_t -- widened: channel try_get output */
     while (1) {
-        status = wb_dma_ch_probe_status(s);
+        status = wb_dma_ch_probe_status(_self);
         if (status != 2) {
             break;
         }
-        wb_dma_ch_wait_hint(s);
+        wb_dma_ch_wait_hint(_self);
     }
     /*
      * The operation is over: drop the claim its *_start() took. The result is
@@ -928,7 +928,7 @@ static inline wb_dma_status_e wb_dma_ch_wait_completion(wb_dma_ch_c *s) {
      * absent -- a *_start() that reported a double-start and returned without
      * arming, whose caller is already in error.
      */
-    pssc_chan1_try_get(&s->inflight, &tok);
+    pssc_chan1_try_get(&_self->inflight, &tok);
     return status;
 }
 
@@ -958,9 +958,9 @@ static inline wb_dma_status_e wb_dma_ch_wait_completion(wb_dma_ch_c *s) {
  *
  * :param cfg: what to program before arming
  */
-static inline wb_dma_status_e wb_dma_ch_transfer_single(wb_dma_ch_c *s, wb_dma_ch_cfg_s cfg) {
-    wb_dma_ch_transfer_single_start(s, cfg);
-    return wb_dma_ch_wait_completion(s);
+static inline wb_dma_status_e wb_dma_ch_transfer_single(wb_dma_ch_c *_self, wb_dma_ch_cfg_s cfg) {
+    wb_dma_ch_transfer_single_start(_self, cfg);
+    return wb_dma_ch_wait_completion(_self);
 }
 
 /*
@@ -985,9 +985,9 @@ static inline wb_dma_status_e wb_dma_ch_transfer_single(wb_dma_ch_c *s, wb_dma_c
  * :param head: head of the descriptor chain, as returned when the list was
  *              built; must be reachable from interface 0
  */
-static inline wb_dma_status_e wb_dma_ch_transfer_list(wb_dma_ch_c *s, pssc_addr_t head) {
-    wb_dma_ch_transfer_list_start(s, head);
-    return wb_dma_ch_wait_completion(s);
+static inline wb_dma_status_e wb_dma_ch_transfer_list(wb_dma_ch_c *_self, pssc_addr_t head) {
+    wb_dma_ch_transfer_list_start(_self, head);
+    return wb_dma_ch_wait_completion(_self);
 }
 
 /*
@@ -1015,16 +1015,16 @@ static inline wb_dma_status_e wb_dma_ch_transfer_list(wb_dma_ch_c *s, pssc_addr_
  * See ``stop_channel_start()`` for what that sharing costs -- which read
  * consumes the ERR is not determined by this model -- and for open item §6.5.
  */
-static inline wb_dma_status_e wb_dma_ch_stop_channel(wb_dma_ch_c *s) {
+static inline wb_dma_status_e wb_dma_ch_stop_channel(wb_dma_ch_c *_self) {
     wb_dma_status_e status;
-    wb_dma_ch_stop_channel_start(s);
+    wb_dma_ch_stop_channel_start(_self);
     /* wait_completion()'s loop, minus the guard release. See above. */
     while (1) {
-        status = wb_dma_ch_probe_status(s);
+        status = wb_dma_ch_probe_status(_self);
         if (status != 2) {
             break;
         }
-        wb_dma_ch_wait_hint(s);
+        wb_dma_ch_wait_hint(_self);
     }
     return status;
 }
@@ -1078,20 +1078,20 @@ static inline wb_dma_status_e wb_dma_ch_stop_channel(wb_dma_ch_c *s) {
  *    PENDING instead, because the state needed for an honest answer was
  *    consumed by whoever broke the rule.
  */
-static inline wb_dma_status_e wb_dma_ch_check_completion(wb_dma_ch_c *s) {
+static inline wb_dma_status_e wb_dma_ch_check_completion(wb_dma_ch_c *_self) {
     wb_dma_status_e status;
     uint64_t tok;   /* PSS: uint8_t -- widened: channel try_get output */
-    if (!(pssc_chan1_try_get(&s->inflight, &tok))) {
+    if (!(pssc_chan1_try_get(&_self->inflight, &tok))) {
         pssc_message("wb_dma: check_completion() with no operation in progress on this channel -- either no *_start() was called, or a previous completion was already consumed");
         return 2;
     }
-    status = wb_dma_ch_probe_status(s);
+    status = wb_dma_ch_probe_status(_self);
     if (status == 2) {
         /*
          * Still running: hand the token back. try_put cannot fail -- this
          * is the only holder, and it was just emptied.
          */
-        pssc_chan1_try_put(&s->inflight, tok);
+        pssc_chan1_try_put(&_self->inflight, tok);
     }
     return status;
 }
@@ -1116,16 +1116,16 @@ static inline wb_dma_status_e wb_dma_ch_check_completion(wb_dma_ch_c *s) {
  * :param cfg: what to program; capability-gated fields are skipped when the
  *             channel was built without the capability
  */
-static inline void wb_dma_ch_configure_channel(wb_dma_ch_c *s, wb_dma_ch_cfg_s cfg) {
+static inline void wb_dma_ch_configure_channel(wb_dma_ch_c *_self, wb_dma_ch_cfg_s cfg) {
     wb_dma_sz_s sz = {0};
     wb_dma_csr_s csr = {0};
-    write32(&s->regs->adr0, cfg.src);
-    write32(&s->regs->am0, cfg.src_mask);
-    write32(&s->regs->adr1, cfg.dst);
-    write32(&s->regs->am1, cfg.dst_mask);
+    write32(&_self->regs->adr0, cfg.src);
+    write32(&_self->regs->am0, cfg.src_mask);
+    write32(&_self->regs->adr1, cfg.dst);
+    write32(&_self->regs->am1, cfg.dst_mask);
     sz.tot_sz = cfg.tot_sz;
     sz.chk_sz = cfg.chk_sz;
-    write32(&s->regs->sz, (sz).raw);
+    write32(&_self->regs->sz, (sz).raw);
     /*
      * CH_EN is what arms the channel, so it must not ride along with the
      * configuration write.
@@ -1142,14 +1142,14 @@ static inline void wb_dma_ch_configure_channel(wb_dma_ch_c *s, wb_dma_ch_cfg_s c
      * Capability-gated. Hardware silently ignores these on a channel built
      * without the capability, so decline rather than pretend they took.
      */
-    if (s->caps.ars) {
+    if (_self->caps.ars) {
         csr.ars = cfg.auto_restart;
         csr.rest_en = cfg.hw_restart_en;
     }
     csr.ine_done = cfg.int_on_done;
     csr.ine_err = cfg.int_on_err;
     csr.ine_chk_done = cfg.int_on_chunk;
-    write32(&s->regs->csr, (csr).raw);
+    write32(&_self->regs->csr, (csr).raw);
 }
 
 /*
@@ -1184,9 +1184,9 @@ static inline void wb_dma_ch_configure_channel(wb_dma_ch_c *s, wb_dma_ch_cfg_s c
  *    past the guard opts out of the only detector for the read-to-clear
  *    hazard, and the read is a side effect every time.
  */
-static inline wb_dma_status_e wb_dma_ch_probe_status(wb_dma_ch_c *s) {
+static inline wb_dma_status_e wb_dma_ch_probe_status(wb_dma_ch_c *_self) {
     wb_dma_csr_s csr = {0};
-    csr = (wb_dma_csr_s){ .raw = read32(&s->regs->csr) };
+    csr = (wb_dma_csr_s){ .raw = read32(&_self->regs->csr) };
     if (csr.err == 1) {
         return 1;
     }
@@ -1220,15 +1220,15 @@ static inline wb_dma_status_e wb_dma_ch_probe_status(wb_dma_ch_c *s) {
  * :param enable: 1 to auto-restart on completion, 0 to stop after the
  *                current iteration
  */
-static inline void wb_dma_ch_set_auto_restart(wb_dma_ch_c *s, uint8_t enable) {
+static inline void wb_dma_ch_set_auto_restart(wb_dma_ch_c *_self, uint8_t enable) {
     /*
      * Silently ignored by hardware without ARS, so decline rather than
      * pretend.
      */
-    if (!(s->caps.ars)) {
+    if (!(_self->caps.ars)) {
         return;
     }
-    write32(&s->regs->csr, (read32(&s->regs->csr) & ~(64)) | ((((uint32_t)enable & 1) << 6) & (64)));
+    write32(&_self->regs->csr, (read32(&_self->regs->csr) & ~(64)) | ((((uint32_t)enable & 1) << 6) & (64)));
 }
 
 /*
@@ -1253,9 +1253,9 @@ static inline void wb_dma_ch_set_auto_restart(wb_dma_ch_c *s, uint8_t enable) {
  * :param ptr:    the new software pointer
  * :param enable: whether the pointer is honoured at all
  */
-static inline void wb_dma_ch_set_software_pointer(wb_dma_ch_c *s, uint32_t ptr, uint8_t enable) {
+static inline void wb_dma_ch_set_software_pointer(wb_dma_ch_c *_self, uint32_t ptr, uint8_t enable) {
     wb_dma_swptr_s sw = {0};
-    if (!(s->caps.cbuf)) {
+    if (!(_self->caps.cbuf)) {
         return;
     }
     /*
@@ -1266,7 +1266,7 @@ static inline void wb_dma_ch_set_software_pointer(wb_dma_ch_c *s, uint32_t ptr, 
      */
     sw.ptr = ptr;
     sw.en = enable;
-    write32(&s->regs->swptr, (sw).raw);
+    write32(&_self->regs->swptr, (sw).raw);
 }
 
 /*
@@ -1311,8 +1311,8 @@ static inline void wb_dma_ch_set_software_pointer(wb_dma_ch_c *s, uint32_t ptr, 
  *    the current WISHBONE cycle retires? That decides whether an abort can
  *    be considered delivered on return, which matters post-silicon.
  */
-static inline void wb_dma_ch_stop_channel_start(wb_dma_ch_c *s) {
-    write32(&s->regs->csr, (read32(&s->regs->csr) & ~(512)) | ((512) & (512)));
+static inline void wb_dma_ch_stop_channel_start(wb_dma_ch_c *_self) {
+    write32(&_self->regs->csr, (read32(&_self->regs->csr) & ~(512)) | ((512) & (512)));
 }
 
 /*
@@ -1345,13 +1345,13 @@ static inline void wb_dma_ch_stop_channel_start(wb_dma_ch_c *s) {
  * :param head: head of the descriptor chain; must be reachable from
  *              interface 0
  */
-static inline void wb_dma_ch_transfer_list_start(wb_dma_ch_c *s, pssc_addr_t head) {
+static inline void wb_dma_ch_transfer_list_start(wb_dma_ch_c *_self, pssc_addr_t head) {
     /* Checked before claiming, so a declined start leaves no token behind. */
-    if (!(s->caps.ed)) {
+    if (!(_self->caps.ed)) {
         pssc_message("wb_dma: transfer_list_start() on a channel built without external-descriptor support (caps.ed)");
         return;
     }
-    if (!(pssc_chan1_try_put(&s->inflight, 1))) {
+    if (!(pssc_chan1_try_put(&_self->inflight, 1))) {
         pssc_message("wb_dma: transfer_list_start() on a channel that already has an operation in progress");
         return;
     }
@@ -1360,7 +1360,7 @@ static inline void wb_dma_ch_transfer_list_start(wb_dma_ch_c *s, pssc_addr_t hea
      * descriptors from interface 0 regardless of which interface the data
      * moves on, so `head` must be IF0-reachable.
      */
-    write32(&s->regs->desc, (head & 0xffffffffu));
+    write32(&_self->regs->desc, (head & 0xffffffffu));
     /*
      * Steps 3 and 4, in that order and as TWO WRITES, deliberately: the
      * device requires them separate, and write_fields({"use_ed","ch_en"},
@@ -1368,8 +1368,8 @@ static inline void wb_dma_ch_transfer_list_start(wb_dma_ch_c *s, pssc_addr_t hea
      * what the plural form is for. Each of these is still a
      * read-modify-write in its own right (§21.14.1).
      */
-    write32(&s->regs->csr, (read32(&s->regs->csr) & ~(128)) | ((128) & (128)));
-    write32(&s->regs->csr, (read32(&s->regs->csr) & ~(1)) | ((1) & (1)));
+    write32(&_self->regs->csr, (read32(&_self->regs->csr) & ~(128)) | ((128) & (128)));
+    write32(&_self->regs->csr, (read32(&_self->regs->csr) & ~(1)) | ((1) & (1)));
 }
 
 /*
@@ -1406,18 +1406,18 @@ static inline void wb_dma_ch_transfer_list_start(wb_dma_ch_c *s, pssc_addr_t hea
  *
  * :param cfg: what to program before arming
  */
-static inline void wb_dma_ch_transfer_single_start(wb_dma_ch_c *s, wb_dma_ch_cfg_s cfg) {
-    if (!(pssc_chan1_try_put(&s->inflight, 1))) {
+static inline void wb_dma_ch_transfer_single_start(wb_dma_ch_c *_self, wb_dma_ch_cfg_s cfg) {
+    if (!(pssc_chan1_try_put(&_self->inflight, 1))) {
         pssc_message("wb_dma: transfer_single_start() on a channel that already has an operation in progress");
         return;
     }
-    wb_dma_ch_configure_channel(s, cfg);
+    wb_dma_ch_configure_channel(_self, cfg);
     /*
      * Arm. write_field is a read-modify-write (§21.14.1), so the
      * configuration just written survives; the read clears the read-to-clear
      * status bits, harmless here because the channel has not started yet.
      */
-    write32(&s->regs->csr, (read32(&s->regs->csr) & ~(1)) | ((1) & (1)));
+    write32(&_self->regs->csr, (read32(&_self->regs->csr) & ~(1)) | ((1) & (1)));
 }
 
 /*
@@ -1459,8 +1459,8 @@ static inline void wb_dma_ch_transfer_single_start(wb_dma_ch_c *s, wb_dma_ch_cfg
  *    would deadlock the one caller that has no interrupt to wait for. The
  *    contract is stated in full in ``docs/op-model-export-design.md`` §4.4.
  */
-static inline void wb_dma_ch_wait_hint(wb_dma_ch_c *s) {
-    (void)s;
+static inline void wb_dma_ch_wait_hint(wb_dma_ch_c *_self) {
+    (void)_self;
     /*
      * No event to wait on, so spin. The caller re-reads CHn_CSR on every
      * iteration; this only decides what the gap between reads costs, and
@@ -1470,20 +1470,20 @@ static inline void wb_dma_ch_wait_hint(wb_dma_ch_c *s) {
 }
 
 /* --- wb_dma_c --- */
-static inline void wb_dma_init(wb_dma_c *self, pssc_addr_t base) {
-    self->num_ch = 4;
-    self->pri_levels = 4;
-    (self->base_regs = base, self->regs = (wb_dma_regs_c *)(uintptr_t)self->base_regs);
+static inline void wb_dma_init(wb_dma_c *_self, pssc_addr_t base) {
+    _self->num_ch = 4;
+    _self->pri_levels = 4;
+    (_self->base_regs = base, _self->regs = (wb_dma_regs_c *)(uintptr_t)_self->base_regs);
     for (unsigned i = 0; i < 4u; i++) {
-        wb_dma_ch_init(&self->ch[i], i, (base + (0x20u + 0x20u * i)));
+        wb_dma_ch_init(&_self->ch[i], i, (base + (0x20u + 0x20u * i)));
     }
 }
 static inline wb_dma_c *wb_dma_create(pssc_addr_t base) {
-    wb_dma_c *self = (wb_dma_c *)malloc(sizeof(wb_dma_c));
-    if (self) wb_dma_init(self, base);
-    return self;
+    wb_dma_c *_self = (wb_dma_c *)malloc(sizeof(wb_dma_c));
+    if (_self) wb_dma_init(_self, base);
+    return _self;
 }
-static inline void wb_dma_destroy(wb_dma_c *self) { free(self); }
+static inline void wb_dma_destroy(wb_dma_c *_self) { free(_self); }
 
 /*
  * Route a set of channels to one of the two aggregate interrupt outputs.
@@ -1506,15 +1506,15 @@ static inline void wb_dma_destroy(wb_dma_c *self) { free(self); }
  * :param bank:         which aggregate output to program
  * :param channel_mask: bit N routes channel N
  */
-static inline void wb_dma_configure_interrupt_routing(wb_dma_c *s, wb_dma_int_bank_e bank, uint32_t channel_mask) {
+static inline void wb_dma_configure_interrupt_routing(wb_dma_c *_self, wb_dma_int_bank_e bank, uint32_t channel_mask) {
     wb_dma_intmsk_s vec = {0};
     vec.ch = channel_mask;
     switch (bank) {
     case 0:
-        write32(&s->regs->int_msk_a, (vec).raw);
+        write32(&_self->regs->int_msk_a, (vec).raw);
         break;
     case 1:
-        write32(&s->regs->int_msk_b, (vec).raw);
+        write32(&_self->regs->int_msk_b, (vec).raw);
         break;
     default:
         pssc_message("wb_dma: unmatched match subject in configure_interrupt_routing");
@@ -1542,12 +1542,12 @@ static inline void wb_dma_configure_interrupt_routing(wb_dma_c *s, wb_dma_int_ba
  *
  * :param pause: 1 to pause, 0 to resume
  */
-static inline void wb_dma_pause_engine(wb_dma_c *s, uint8_t pause) {
+static inline void wb_dma_pause_engine(wb_dma_c *_self, uint8_t pause) {
     wb_dma_gcsr_s gcsr = {0};
     gcsr.pause = pause;
-    write32(&s->regs->csr, (gcsr).raw);
+    write32(&_self->regs->csr, (gcsr).raw);
     while (1) {
-        gcsr = (wb_dma_gcsr_s){ .raw = read32(&s->regs->csr) };
+        gcsr = (wb_dma_gcsr_s){ .raw = read32(&_self->regs->csr) };
         if (gcsr.pause == pause) {
             break;
         }
@@ -1574,8 +1574,8 @@ static inline void wb_dma_pause_engine(wb_dma_c *s, uint8_t pause) {
  *
  * :param desc_ptr: the descriptor whose control word is read back
  */
-static inline uint16_t wb_dma_read_descriptor_residual(wb_dma_c *s, pssc_addr_t desc_ptr) {
-    (void)s;
+static inline uint16_t wb_dma_read_descriptor_residual(wb_dma_c *_self, pssc_addr_t desc_ptr) {
+    (void)_self;
     uint32_t desc_csr;
     desc_csr = read32((volatile void *)(uintptr_t)(desc_ptr));
     return (desc_csr & 0xfff);
@@ -1603,8 +1603,8 @@ static inline uint16_t wb_dma_read_descriptor_residual(wb_dma_c *s, pssc_addr_t 
  * :param prev: the descriptor to link from; null/zero means "head of list"
  * :param desc: the descriptor contents; the caller's copy is not modified
  */
-static inline pssc_addr_t wb_dma_write_descriptor(wb_dma_c *s, pssc_addr_t at, pssc_addr_t prev, wb_dma_desc_s desc) {
-    (void)s;
+static inline pssc_addr_t wb_dma_write_descriptor(wb_dma_c *_self, pssc_addr_t at, pssc_addr_t prev, wb_dma_desc_s desc) {
+    (void)_self;
     wb_dma_desc_s d = {0};
     uint32_t csr_word;
     /*

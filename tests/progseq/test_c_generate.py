@@ -70,11 +70,11 @@ def test_baked_accessors(vtable):
 def test_export_api_native(vtable):
     h, c = _h(vtable), _c(vtable)
     # native int return, opaque handle first arg, no output-status
-    assert "int wb_dma_mem_to_mem_copy(dma_engine_c *s, int channel," in h
+    assert "int wb_dma_mem_to_mem_copy(dma_engine_c *_self, int channel," in h
     assert "do {" in c and "} while (" in c           # native do...while
     assert "output" not in c
     # vtable create takes the bus
-    assert "wb_dma_create(const pssc_mem_if *bus, pssc_addr_t base)" in h
+    assert "wb_dma_create(const pssc_mem_if *_bus, pssc_addr_t base)" in h
 
 
 def _op_body(text, sig_substr):
@@ -95,7 +95,7 @@ def test_body_identical_across_address_seams(tmp_path):
 
     `mmio` is deliberately not in the set any more. It is the pointer-
     dereference seam, so the device IS memory and the generated body follows
-    the register-layout struct -- `write32(&s->regs->csr, v)` rather than a
+    the register-layout struct -- `write32(&_self->regs->csr, v)` rather than a
     baked accessor over a folded offset. That is a different body on purpose,
     and it is the one thing this test must not average away.
 

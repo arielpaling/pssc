@@ -20,7 +20,17 @@ from __future__ import annotations
 
 from typing import Dict, List, Tuple
 
-__all__ = ["declared_names", "check"]
+__all__ = ["HANDLE", "BUS", "RESERVED", "declared_names", "check"]
+
+#: The component handle every generated function takes, and the constructor's
+#: bus parameter. Both are only ever parameters and locals, where a leading
+#: `_` is not reserved (C11 7.1.3 reserves it at file scope; C++ in the global
+#: namespace) -- `__self` would be. A PSS identifier may still be spelled this
+#: way, so `mangle` renames a user's `_self` as it renames a C keyword: the
+#: parameter `s` a model wrote once collided with a handle called `s`.
+HANDLE = "_self"
+BUS = "_bus"
+RESERVED = frozenset({HANDLE, BUS})
 
 
 def _short(dtype) -> str:

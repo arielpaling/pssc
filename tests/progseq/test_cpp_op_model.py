@@ -156,8 +156,8 @@ def test_register_groups_are_bound_once(h):
 
 def test_the_factory_returns_the_interface(h):
     assert_cpp(h, has=["static std::unique_ptr<wb_dma_c_if> create("
-                       "wb_dma_import_if &imp, pssc::addr_t base) {",
-                       "self->initialize(base);"])
+                       "wb_dma_import_if &_imp, pssc::addr_t base) {",
+                       "_self->initialize(base);"])
 
 
 # --- types ------------------------------------------------------------------

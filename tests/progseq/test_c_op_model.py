@@ -126,10 +126,10 @@ def test_no_parent_back_pointer(h):
 
 
 def test_each_component_carries_its_own_bus(h):
-    """A sub-component's register accessors call `pssc_bus(s)` with ITS handle.
+    """A sub-component's register accessors call `pssc_bus(_self)` with ITS handle.
     Reaching the root's copy instead would need the back-pointer above."""
     ch = h[h.index("typedef struct wb_dma_ch_c {"):h.index("} wb_dma_ch_c;")]
-    assert "const pssc_mem_if *bus;" in ch
+    assert "const pssc_mem_if *_bus;" in ch
     assert "pssc_addr_t base_regs;" in ch
 
 
@@ -145,8 +145,8 @@ def test_component_data_members_are_present(h):
 
 def test_sub_component_accessor_and_count(h):
     assert_c(h, has=["#define WB_DMA_CH_COUNT 4u",
-                     "static inline wb_dma_ch_c *wb_dma_ch(wb_dma_c *s, unsigned i) "
-                     "{ return &s->ch[i]; }"])
+                     "static inline wb_dma_ch_c *wb_dma_ch(wb_dma_c *_self, unsigned i) "
+                     "{ return &_self->ch[i]; }"])
 
 
 def test_the_count_is_the_models_number(h):
@@ -168,7 +168,7 @@ def test_per_channel_operations_use_the_type_prefix(h):
                "set_auto_restart", "set_software_pointer", "wait_completion",
                "transfer_single_start", "transfer_list_start",
                "stop_channel_start", "wait_hint"):
-        assert f"wb_dma_ch_{op}(wb_dma_ch_c *s" in h, op
+        assert f"wb_dma_ch_{op}(wb_dma_ch_c *_self" in h, op
     # ...and NOT under the root's prefix, which is what a generator that keyed
     # off the instance would have produced.
     assert_c(h, has_not=["wb_dma_transfer_single(", "wb_dma_ch0_transfer_single("])
@@ -184,7 +184,8 @@ def test_the_whole_per_channel_surface_is_present(h):
     as operations. The header's export API is exactly the callable surface,
     which is what this test is about anyway.
     """
-    assert h.count("wb_dma_ch_c *s);") + h.count("wb_dma_ch_c *s, ") == 13
+    n = h.count("wb_dma_ch_c *_self);") + h.count("wb_dma_ch_c *_self, ")
+    assert n - h.count("wb_dma_ch_init(wb_dma_ch_c *_self") == 13
 
 
 def test_prefix_collision_is_an_error():
@@ -217,7 +218,7 @@ def test_prefix_map_is_the_escape_hatch(gen, tmp_path_factory):
                             c_prefix_map=["wb_dma_ch_c=chan"])
     driver.compile(_sources(), target="op-model-c", opts=ns)
     h = (out / "wb_dma.h").read_text()
-    assert_c(h, has=["} chan;", "chan_transfer_single(chan *s"],
+    assert_c(h, has=["} chan;", "chan_transfer_single(chan *_self"],
              has_not=["} wb_dma_ch_c;"])
 
 
@@ -232,9 +233,9 @@ def test_channel_registers_are_reached_through_the_channel_handle(c):
     device through the operations rather than through them."""
     assert_c(c, has=[
         "PSSC_MAYBE_UNUSED static inline pssc_addr_t "
-        "wb_dma_ch_regs_csr_addr(const wb_dma_ch_c *s) "
-        "{ return s->base_regs + 0x0u; }",
-        "wb_dma_ch_regs_csr_write(wb_dma_ch_c *s, wb_dma_csr_s v)",
+        "wb_dma_ch_regs_csr_addr(const wb_dma_ch_c *_self) "
+        "{ return _self->base_regs + 0x0u; }",
+        "wb_dma_ch_regs_csr_write(wb_dma_ch_c *_self, wb_dma_csr_s v)",
     ])
 
 
@@ -245,8 +246,8 @@ def test_the_same_register_is_also_reachable_from_the_root(c):
     call site to break."""
     assert ("PSSC_MAYBE_UNUSED static inline pssc_addr_t "
             "wb_dma_regs_bank_csr_addr("
-            "const wb_dma_c *s, int i0) "
-            "{ return s->base_regs + 0x20u + (pssc_addr_t)i0 * 0x20u; }") in c
+            "const wb_dma_c *_self, int i0) "
+            "{ return _self->base_regs + 0x20u + (pssc_addr_t)i0 * 0x20u; }") in c
 
 
 def test_register_value_types_are_emitted_once(h, c):
@@ -280,7 +281,7 @@ def test_init_binds_the_base_and_constructs_every_channel(c):
     function that does not exist."""
     assert_c(c, has=[
         "for (unsigned i = 0; i < 4u; i++) {",
-        "wb_dma_ch_init(&self->ch[i], self->bus, i, (base + (0x20u + 0x20u * i)));",
+        "wb_dma_ch_init(&_self->ch[i], _self->_bus, i, (base + (0x20u + 0x20u * i)));",
     ], has_not=["get_offset_of_instance", "set_handle"])
 
 
@@ -290,16 +291,16 @@ def test_channel_init_binds_its_own_bank(c):
     accessors, the instance part lands here."""
     body = c[c.index("void wb_dma_ch_init("):]
     body = body[:body.index("\n}")]
-    assert "self->base_regs = bank" in body
-    assert "self->chan = id;" in body
+    assert "_self->base_regs = bank" in body
+    assert "_self->chan = id;" in body
 
 
 def test_capability_defaults_are_assigned(c):
     """`wb_dma_ch_caps_s` declares every capability true, and operations gate on
     them. A channel initialised to all-false silently refuses work the device
     can do -- a driver reporting a device limitation that is really its own."""
-    assert_c(c, has=["self->caps.present = 1;", "self->caps.ars = 1;",
-                     "self->caps.ed = 1;", "self->caps.cbuf = 1;"])
+    assert_c(c, has=["_self->caps.present = 1;", "_self->caps.ars = 1;",
+                     "_self->caps.ed = 1;", "_self->caps.cbuf = 1;"])
 
 
 def test_create_and_destroy_are_root_only(h):
@@ -313,8 +314,8 @@ def test_create_and_destroy_are_root_only(h):
 
 def test_the_channel_members_are_real(h, c):
     assert_c(h, has=["    pssc_chan1_t inflight;", "    pssc_chan1_t wake;"])
-    assert_c(c, has=["pssc_chan1_init(&self->inflight);",
-                     "pssc_chan1_init(&self->wake);"])
+    assert_c(c, has=["pssc_chan1_init(&_self->inflight);",
+                     "pssc_chan1_init(&_self->wake);"])
 
 
 def test_the_inflight_guard_survives_into_c(c):
@@ -322,8 +323,8 @@ def test_the_inflight_guard_survives_into_c(c):
     rejected: it never blocks, and it is what detects polling a channel nobody
     armed. A C driver without it answers a stale CSR read the same way it
     answers a live one."""
-    assert_c(c, has=["pssc_chan1_try_get(&s->inflight, &tok)",
-                     "pssc_chan1_try_put(&s->inflight, tok)"])
+    assert_c(c, has=["pssc_chan1_try_get(&_self->inflight, &tok)",
+                     "pssc_chan1_try_put(&_self->inflight, tok)"])
 
 
 def test_the_blocking_wait_is_absent_and_the_poll_is_present(c):
@@ -332,9 +333,9 @@ def test_the_blocking_wait_is_absent_and_the_poll_is_present(c):
     What must NOT happen is the end-to-end layer disappearing with it: that was
     the pre-M0 behaviour, and it gave firmware and UVM two different APIs for
     one device."""
-    assert_c(c, has=["void wb_dma_ch_wait_hint(wb_dma_ch_c *s) {",
-                     "wb_dma_ch_wait_completion(wb_dma_ch_c *s)",
-                     "wb_dma_ch_transfer_single(wb_dma_ch_c *s"],
+    assert_c(c, has=["void wb_dma_ch_wait_hint(wb_dma_ch_c *_self) {",
+                     "wb_dma_ch_wait_completion(wb_dma_ch_c *_self)",
+                     "wb_dma_ch_transfer_single(wb_dma_ch_c *_self"],
              has_not=["wb_dma_notify_irq", "pssc_chan1_get(", "wake.get"],
              code=True)
 
@@ -355,7 +356,7 @@ def test_write_field_folds_to_a_masked_write(c):
     that silently returned 0 would produce `_write_masked(0, 0)` -- a
     read-modify-write that changes nothing and reports success.
     """
-    assert "wb_dma_ch_regs_csr_write_masked(s, 64, ((uint32_t)enable & 1) << 6);" in c
+    assert "wb_dma_ch_regs_csr_write_masked(_self, 64, ((uint32_t)enable & 1) << 6);" in c
 
 
 def test_each_write_field_is_its_own_read_modify_write(c):
@@ -370,7 +371,7 @@ def test_each_write_field_is_its_own_read_modify_write(c):
     body = c[c.index("void wb_dma_ch_transfer_list_start("):]
     body = body[:body.index("\n}")]
     assert body.count("wb_dma_ch_regs_csr_write_masked(") == 2
-    assert body.index("write_masked(s, 128, 128)") < body.index("write_masked(s, 1, 1)")
+    assert body.index("write_masked(_self, 128, 128)") < body.index("write_masked(_self, 1, 1)")
 
 
 # --- lowering details a compiler would not catch ---------------------------
@@ -400,10 +401,10 @@ def test_a_discarded_result_is_stated_not_dropped(c):
     the `(void)` marker has nothing to mark. The assertion moves to the call
     itself, which is what the test was always really about.
     """
-    assert "pssc_chan1_try_get(&s->inflight, &tok);" in c
+    assert "pssc_chan1_try_get(&_self->inflight, &tok);" in c
     # ...and it is a bare statement, not folded into a condition: the value is
     # discarded, not tested.
-    assert "if (!(pssc_chan1_try_get(&s->inflight, &tok)));" not in c
+    assert "if (!(pssc_chan1_try_get(&_self->inflight, &tok)));" not in c
 
 
 # --- the compile gate ------------------------------------------------------
@@ -485,7 +486,7 @@ def test_static_lifecycle_still_has_the_whole_api(gen_static):
     operation is still there. A lifecycle knob that quietly shrank the operation
     surface would be indistinguishable from a broken tree walk."""
     h = (gen_static / "wb_dma.h").read_text()
-    assert_c(h, has=["void wb_dma_init(wb_dma_c *self, const pssc_mem_if *bus,"
+    assert_c(h, has=["void wb_dma_init(wb_dma_c *_self, const pssc_mem_if *_bus,"
                      " pssc_addr_t base);",
                      "void wb_dma_ch_init(",
                      "wb_dma_ch_transfer_single_start(",
@@ -590,7 +591,7 @@ def test_the_whole_driver_builds_for_a_32_bit_target(tmp_path):
     """The call seams take the address BY VALUE and never form a pointer from
     it, so a 64-bit `pssc_addr_t` on a 32-bit machine is fine for them. Asserted
     against the real driver rather than a probe header, because it is the
-    generated offset arithmetic -- `s->base + 0x20u + 0x20u * i`, all in
+    generated offset arithmetic -- `_self->base + 0x20u + 0x20u * i`, all in
     `pssc_addr_t` -- that has to stay 64-bit-clean.
     """
     cc = _CC[0]

@@ -141,11 +141,11 @@ def test_construction_is_split_from_the_ctor(sv):
     """`new()` takes only the import API (design D2); the model's constructor
     is a method `create()` runs, then PSS construction (D3)."""
     assert_generated(sv, has=[
-        "static function wb_dma_c_ctxt_if create(Timp imp, addr_handle_t base);",
+        "static function wb_dma_c_ctxt_if create(Timp pss_imp, addr_handle_t base);",
         "protected function new(Timp imp);",
         "function void initialize(addr_handle_t base);",
-        "      model.pss_root.initialize(base);\n"
-        "      model.pss_root.pss_do_init();",
+        "      pss_model.pss_root.initialize(base);\n"
+        "      pss_model.pss_root.pss_do_init();",
         "function new(wb_dma_c_imp_if imp);\n      super.new(imp);",
     ], has_not=["function new(Timp imp, addr_handle_t base);"])
 
