@@ -1530,6 +1530,26 @@ _ADDR_BUILTINS = {
 }
 
 
+class _CtorEmitter(_BodyEmitter):
+    """A constructor's body. Every statement renders as in any solve-context
+    body; the address-binding calls (`regs.set_handle(h)`,
+    `super.initialize(...)`) render as what they do (`lower_init`)."""
+
+    def __init__(self, fn, comp, member_of, reg_groups=(), **kw):
+        super().__init__(fn, comp, member_of, **kw)
+        self.reg_groups = list(reg_groups)
+
+    def stmt_expr(self, s, ind: int) -> List[str]:
+        if _dt_name(s.expr) == "ExprCall":
+            from .lower_init import binding_call
+            lines = binding_call(s.expr, members=self.member_of,
+                                 reg_groups=self.reg_groups, bus=IMP_MEMBER,
+                                 expr=self.expr, pad=self.pad(ind))
+            if lines is not None:
+                return lines
+        return super().stmt_expr(s, ind)
+
+
 class _ExprOnly(_BodyEmitter):
     """Expression rendering without a surrounding function.
 
@@ -1854,27 +1874,25 @@ def _construct_body(view, members, subs) -> List[str]:
     return lines
 
 
-def _initialize_def(comp, ctor, members, *, super_base=None) -> List[str]:
+def _initialize_def(comp, ctor, members, *, super_base=None, namer=None,
+                    ctor_names=None, ctx=None) -> List[str]:
     """The op-model constructor, as a method (design D3). Not virtual: every
     caller uses its member's declared type, so a derived class may declare
     one with another signature and still reach its base's through `super`.
 
-    With a body, that body IS the address binding and is lowered statement by
-    statement (`lower_init`). An EMPTY body keeps the flat convention the
+    With a body, that body IS the address binding, rendered as any solve
+    body is (`_CtorEmitter`). An EMPTY body keeps the flat convention the
     backends share: every register group -- inherited ones too -- sits at the
     first argument.
     """
     params = ", ".join(f"{sv_type(a.annotation)} {mangle(a.arg)}"
                        for a in ctor.args.args)
     reg_groups = [f.name for f in comp.fields if field_is_reg_group(f)]
-    subs = {s.name: s for s in sub_components(comp)}
     if ctor.body:
-        from .lower_init import lower_init
-        be = _ExprOnly(members, ctor=ctor, comp=comp)
+        be = _CtorEmitter(ctor, comp, members, reg_groups=reg_groups,
+                          namer=namer, ctor_names=ctor_names, ctx=ctx)
         be.super_base = super_base
-        body = lower_init(ctor, members=members, reg_groups=reg_groups,
-                          subs=subs, bus=IMP_MEMBER, expr=be.expr, indent=3,
-                          own={f.name: f for f in comp.functions})
+        body = be.stmts(ctor.body, 3)
     elif ctor.args.args:
         base = mangle(ctor.args.args[0].arg)
         body = [f"      {members[g]} = new({IMP_MEMBER}, {base});"
@@ -2089,7 +2107,8 @@ def emit_component_class(model, comp, namer=None) -> str:
 
     own_ctor = _ctor(view, ctor_names)
     if own_ctor is not None:
-        lines += _initialize_def(comp, own_ctor, members, super_base=base)
+        lines += _initialize_def(comp, own_ctor, members, super_base=base,
+                                 namer=namer, ctor_names=ctor_names, ctx=ctx)
     elif base is not None:
         lines += _inherited_ctor_def(comp, view, _ctor(comp, ctor_names),
                                      members)

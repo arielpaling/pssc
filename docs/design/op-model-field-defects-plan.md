@@ -68,6 +68,7 @@ Found on the way:
       already does it).
     * SV's init lowering refuses an assignment to a sub-component's field
       (`sv/lower_init.py`: "unsupported statement in init: StmtAssign").
+      FIXED as W13 of `op-model-issues-plan.md`.
   * **A sub-component named `t` collides with the handle type.** The accessor
     `<prefix>_t()` redeclares the typedef `<prefix>_t`. FIXED: C and C++ types
     now keep their PSS names (`pss_top`, `x_c`, `x_s`, `x_e`), and

@@ -1,6 +1,6 @@
 # Op-model findings from a second field model: triage and plan
 
-Status: **done** (2026-10-07; W10 only as a refusal); rulings in section 4. Source: a list of 14 findings (`issues`, untracked
+Status: W1-W13 **done** (2026-10-07; W10 only as a refusal), W14-W15 planned; rulings in section 4. Source: a list of 14 findings (`issues`, untracked
 in the repo root), reported while projecting another field model through the
 op-model targets. Each finding came with the workaround the model had used.
 
@@ -175,6 +175,27 @@ but not a local, so `int char = 3;` did not compile. DONE: a local is renamed
 as a parameter is. Matrix case: "fields, locals and a parameter named as C
 keywords".
 
+**W13. An SV constructor is a solve body like any other.** SV lowered a
+constructor with its own translator (`sv/lower_init.py`), which knew only
+the address binding -- `set_handle`, `super.initialize`, a sub-component's
+constructor, `self.x = e`, `foreach` -- and refused everything else: a local,
+an `if`, an assignment into a sub-component (`c.a = 20`). DONE: the body is
+rendered by `_CtorEmitter`, the ordinary statement emitter in solve context,
+with `lower_init.binding_call` intercepting the two calls that mean something
+only there (`regs.set_handle(h)` rebuilds the group; `super.initialize(...)`
+is the base class's method). The sv goldens' channel loop becomes
+`foreach (ch[i])`. Matrix: "a constructor with a local, a condition and a
+loop"; the strict xfail on "a constructor writes into a child before
+constructing it" is gone for SV.
+
+**W14. Local arrays (C, C++, SV).** Planned. `array<bit[8], 2> w;` in a
+function fails with an internal error ("unsupported C type for
+DataTypeArray") everywhere but Python.
+
+**W15. Array initializers.** Planned, after W14: `{1, 2, 3}` as a field
+initializer, a local's initializer and an assigned value, with the element
+count checked; then W10's refusal goes.
+
 ## 3. Carried over from the earlier list
 
 These remain from `op-model-field-defects-plan.md` §0 and are not in this
@@ -185,7 +206,7 @@ report:
 * `get_offset_of_instance` is classified by name alone on non-register
   components (corpus `types.string.match.001`).
 * Python: a sub-component with a constructor is `None` until that constructor
-  is called. SV: init refuses assigning a sub-component's field.
+  is called. (SV's init refusing a sub-component's field is W13.)
 
 ## 4. Rulings (2026-10-07)
 

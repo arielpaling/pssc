@@ -1,7 +1,8 @@
-"""Lower a component's op-model constructor (``init``) to an SV method.
+"""The address binding in an op-model constructor, as SV.
 
-A PSS operation model binds its address map in an `init` (or `ctor`) solve
-function that the integrating environment calls from `exec init_down`:
+A PSS operation model binds its address map in its constructor (`initialize`,
+`init` or `ctor`), a solve function the integrating environment runs while the
+tree is built:
 
     solve function void \\init (addr_handle_t base) {
         regs.set_handle(base);
@@ -13,138 +14,57 @@ function that the integrating environment calls from `exec init_down`:
 
 It becomes a method of the component class, run after construction: `new()`
 has already built every sub-component and put every register group at address
-0 (design D2), so here the register groups are REBUILT against their handles
-and each sub-component's own constructor method is called with the arguments
-the model passes it (D3). The device's own address arithmetic is what places
-everything, so the map stays stated once, in the model, rather than being
-re-derived by each backend.
+0 (design D2). The body is rendered like any other solve-context body
+(`lower_progseq._CtorEmitter`); the calls here are the ones with no meaning
+outside a constructor, and are rendered as what they do:
 
-**Anything not recognised raises.** An `init` is address binding; a statement
-this cannot lower is a binding that would silently not happen, and a component
-whose registers are bound to address zero is far worse than a build error.
+* `regs.set_handle(h)` REBUILDS the register group `regs` at `h`;
+* `super.initialize(...)` is the base class's constructor method (design D3:
+  not virtual, so `super` reaches it whatever this class's signature).
+
+A sub-component's constructor, `ch[i].\\init(...)`, needs nothing special: it
+is a method of the sub-component's class, called as one.
+
+This module used to lower the whole body, statement by statement, and refuse
+anything else -- a local, an `if`, an assignment into a sub-component -- on
+the reasoning that a skipped statement is an unbound address. Rendering the
+other statements as every other body renders them gives the same guarantee:
+nothing is skipped, and a statement with no rendering is still an error.
 """
 from __future__ import annotations
 
 from typing import Callable, Dict, List, Optional
 
-from ..progseq_model import _dt_name, SubComp
-from .keywords import SV_KEYWORDS
-
-
-class InitLoweringError(ValueError):
-    """An `init` statement that has no constructor equivalent."""
-
-
-def _is_self_attr(e, attr: Optional[str] = None) -> bool:
-    return (_dt_name(e) == "ExprAttribute"
-            and _dt_name(e.value) == "TypeExprRefSelf"
-            and (attr is None or e.attr == attr))
+from ..progseq_model import _dt_name
 
 
 def _self_attr_name(e) -> Optional[str]:
-    return e.attr if _is_self_attr(e) else None
+    """`self.<name>` -> name, else None."""
+    if (_dt_name(e) == "ExprAttribute"
+            and _dt_name(getattr(e, "value", None)) == "TypeExprRefSelf"):
+        return e.attr
+    return None
 
 
-def lower_init(ctor, *, members: Dict[str, str], reg_groups: List[str],
-               subs: Dict[str, SubComp], bus: str,
-               expr: Callable[[object], str], indent: int = 3,
-               own: Optional[Dict[str, object]] = None) -> List[str]:
-    """Return the SV method-body lines for ``ctor``.
+def binding_call(call, *, members: Dict[str, str], reg_groups: List[str],
+                 bus: str, expr: Callable[[object], str],
+                 pad: str) -> Optional[List[str]]:
+    """The lines a constructor's ``call`` statement becomes, if it is one of
+    the address-binding calls above; None for any other call.
 
-    ``members`` maps a PSS field name to its generated member name, ``bus`` is
-    the expression a rebuilt register group is wired to, and
-    ``expr`` renders an IR expression (supplied by the caller so this module
-    stays free of expression lowering). ``own`` is the component's functions
-    by name, for a call to one of its solve functions.
+    ``members`` maps a PSS field name to its member name, ``bus`` is the
+    expression a rebuilt register group is wired to, and ``expr`` renders an
+    IR expression.
     """
-    out: List[str] = []
-    for stmt in (ctor.body or []):
-        out += _stmt(stmt, members, reg_groups, subs, bus, expr, indent, own)
-    return out
-
-
-def _stmt(s, members, reg_groups, subs, bus, expr, ind,
-          own=None) -> List[str]:
-    pad = "  " * ind
-    cn = _dt_name(s)
-
-    if cn == "StmtExpr" and _dt_name(s.expr) == "ExprCall":
-        call = s.expr
-        fn = call.func
-        if _dt_name(fn) == "ExprAttribute":
-            # super.initialize(...) -> the base class's constructor method,
-            # which binds what the base declares (design D3: not virtual, so
-            # `super` reaches it whatever this class's signature).
-            if _dt_name(fn.value) == "TypeExprRefSuper":
-                args = ", ".join(expr(a) for a in call.args)
-                return [f"{pad}super.{fn.attr}({args});"]
-            # f(args): one of this component's solve functions, a method of
-            # the class (the gate refuses anything else in solve context). A
-            # result nobody reads is cast away, which SV requires of a
-            # function called as a statement.
-            if _dt_name(fn.value) == "TypeExprRefSelf" and fn.attr != "set_handle":
-                args = ", ".join(expr(a) for a in call.args)
-                name = fn.attr + "_" if fn.attr in SV_KEYWORDS else fn.attr
-                text = f"{name}({args})"
-                callee = (own or {}).get(fn.attr)
-                if getattr(callee, "returns", None) is not None:
-                    text = f"void'({text})"
-                return [f"{pad}{text};"]
-            # regs.set_handle(h) -> build the register group at h
-            if fn.attr == "set_handle":
-                name = _self_attr_name(fn.value)
-                if name in reg_groups:
-                    handle = expr(call.args[0]) if call.args else bus
-                    return [f"{pad}{members[name]} = new({bus}, {handle});"]
-            # sub.<ctor>(args) on a scalar instance: already built by new()
-            name = _self_attr_name(fn.value)
-            if name in subs and not subs[name].is_array:
-                args = ", ".join(expr(a) for a in call.args)
-                return [f"{pad}{members[name]}.{fn.attr}({args});"]
-
-    if cn == "StmtAssign":
-        target = s.targets[0]
-        name = _self_attr_name(target)
-        if name in members:
-            return [f"{pad}{members[name]} = {expr(s.value)};"]
-
-    if cn == "StmtForeach":
-        return _foreach(s, members, reg_groups, subs, bus, expr, ind, own)
-
-    raise InitLoweringError(
-        f"unsupported statement in init: {cn}. An init binds addresses; a "
-        f"statement that cannot be lowered would leave part of the model "
-        f"unbound, so this is an error rather than a skipped line.")
-
-
-def _foreach(s, members, reg_groups, subs, bus, expr, ind,
-             own=None) -> List[str]:
-    """`foreach (ch[i]) { ch[i].init(...); }` -> an indexed loop of calls."""
-    pad = "  " * ind
-    iter_name = _self_attr_name(getattr(s, "iter", None))
-    if iter_name not in subs or not subs[iter_name].is_array:
-        raise InitLoweringError(
-            f"foreach in init must iterate a sub-component array; got {iter_name!r}")
-
-    sub = subs[iter_name]
-    if sub.size is None or sub.size < 0:
-        raise InitLoweringError(
-            f"sub-component array '{iter_name}' has an unknown size, so the "
-            f"loop cannot be bounded")
-
-    idx = getattr(getattr(s, "target", None), "name", "i")
-    body: List[str] = []
-    for inner in (s.body or []):
-        if (_dt_name(inner) == "StmtExpr" and _dt_name(inner.expr) == "ExprCall"
-                and _dt_name(inner.expr.func) == "ExprAttribute"
-                and _dt_name(inner.expr.func.value) == "ExprSubscript"
-                and _self_attr_name(inner.expr.func.value.value) == iter_name):
-            args = ", ".join(expr(a) for a in inner.expr.args)
-            attr = inner.expr.func.attr
-            body.append(f"{pad}  {members[iter_name]}[{idx}].{attr}({args});")
-        else:
-            body += _stmt(inner, members, reg_groups, subs, bus, expr, ind + 1,
-                          own)
-
-    return ([f"{pad}for (int {idx} = 0; {idx} < {sub.size}; {idx}++) begin"]
-            + body + [f"{pad}end"])
+    fn = call.func
+    if _dt_name(fn) != "ExprAttribute":
+        return None
+    if _dt_name(fn.value) == "TypeExprRefSuper":
+        args = ", ".join(expr(a) for a in call.args)
+        return [f"{pad}super.{fn.attr}({args});"]
+    if fn.attr == "set_handle":
+        name = _self_attr_name(fn.value)
+        if name in reg_groups:
+            handle = expr(call.args[0]) if call.args else bus
+            return [f"{pad}{members[name]} = new({bus}, {handle});"]
+    return None

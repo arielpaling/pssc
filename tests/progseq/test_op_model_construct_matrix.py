@@ -96,9 +96,6 @@ def _on(targets, why):
 #: Python builds a sub-component whose type has a constructor AT its
 #: `initialize` call (`_sub_storage`), and it is `None` until then.
 _PY_LAZY_SUB = "py: a sub-component with a constructor is None until called"
-#: SV's init lowering (`sv/lower_init.py`) refuses an assignment to a field
-#: of a sub-component.
-_SV_INIT_SUB_FIELD = "sv: init refuses assigning a sub-component's field"
 
 
 CASES = {
@@ -285,8 +282,23 @@ component pss_top {
     c.initialize(1);
   }
   target function void run() { a.STS.write_val(c.b); }
-}""", ["write 32 0x1004 0x15"],
-        xfail={"py": _PY_LAZY_SUB, "sv": _SV_INIT_SUB_FIELD}),
+}""", ["write 32 0x1004 0x15"], xfail={"py": _PY_LAZY_SUB}),
+
+    # A constructor is a solve function like any other: locals, conditions
+    # and loops. SV lowered only the address binding and refused the rest.
+    # t = 2 + 4 = 6, then added three times.
+    "a constructor with a local, a condition and a loop": Case("""
+component pss_top {
+  ga_c a;
+  int x = 0;
+  solve function void initialize(addr_handle_t base, int m) {
+    int t = 2;
+    a.set_handle(base);
+    if (m > 1) { t = t + m; } else { t = 0; }
+    repeat (3) { x = x + t; }
+  }
+  target function void run() { a.STS.write_val(x); }
+}""", ["write 32 0x1004 0x12"], args=(0x1000, 4)),
 
     # --- D2: operations of a sub-component -------------------------------------
     "calling a sub-component's operation": Case("""

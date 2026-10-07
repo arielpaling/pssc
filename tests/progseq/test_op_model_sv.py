@@ -171,11 +171,12 @@ def test_pss_construction_reaches_the_subcomponents(sv):
 
 def test_init_lowered_to_method_calls(sv):
     """`foreach (ch[i]) ch[i].initialize(i, make_handle_from_handle(base, ...))`
-    becomes a bounded loop of calls to the already-built children, with the
-    address folded."""
+    becomes a loop of calls to the already-built children, with the address
+    folded. SV's own `foreach`, bounded by the array: the constructor body
+    renders as any other body does."""
     assert_generated(sv, has=[
         "regs = new(pss_imp, base);",
-        "for (int i = 0; i < 4; i++) begin",
+        "foreach (ch[i]) begin",
         # Sub-expressions are bracketed: the IR tree says how the expression
         # groups, and SV precedence only sometimes agrees. Same arithmetic.
         #

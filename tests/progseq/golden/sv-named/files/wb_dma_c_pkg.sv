@@ -1116,7 +1116,7 @@ package wb_dma_c_pkg;
      */
     function void initialize(addr_handle_t base);
       regs = new(pss_imp, base);
-      for (int i = 0; i < 4; i++) begin
+      foreach (ch[i]) begin
         ch[i].initialize(i, (base + (64'h20 + 64'h20 * i)));
       end
     endfunction
