@@ -84,7 +84,6 @@ class Case(NamedTuple):
     xfail: Dict[str, str] = {}           # target -> defect it is waiting on
 
 
-_D2 = "D2: op-model-c cannot call into a sub-component"
 _D9 = "D9: evaluated at the host language's width, not PSS's"
 _D9_BOOL = "D9: op-model-cpp renders `bit` as bool, and `~` on a bool is an error"
 
@@ -156,7 +155,7 @@ component pss_top {
   sub_c s;
   solve function void initialize(addr_handle_t base) { s.initialize(base); }
   target function void run() { s.poke(); }
-}""", ["write 32 0x1004 0x1"], xfail=_on(["c"], _D2)),
+}""", ["write 32 0x1004 0x1"]),
 
     "a sub-component's register written from above": Case("""
 component sub_c {
@@ -167,7 +166,7 @@ component pss_top {
   sub_c s;
   solve function void initialize(addr_handle_t base) { s.initialize(base); }
   target function void run() { s.a.STS.write_val(1); }
-}""", ["write 32 0x1004 0x1"], xfail=_on(["c", "cpp", "py"], _D2)),
+}""", ["write 32 0x1004 0x1"]),
 
     "operations of a sub-component array": Case("""
 component sub_c {
@@ -184,8 +183,7 @@ component pss_top {
     s[1].poke();
     foreach (s[i]) { s[i].poke(); }
   }
-}""", ["write 32 0x1104 0x1", "write 32 0x1004 0x1", "write 32 0x1104 0x1"],
-        xfail=_on(["c"], _D2)),
+}""", ["write 32 0x1104 0x1", "write 32 0x1004 0x1", "write 32 0x1104 0x1"]),
 
     "a sub-component's value in a condition": Case("""
 component sub_c {
@@ -198,8 +196,7 @@ component pss_top {
   sub_c s;
   solve function void initialize(addr_handle_t base) { s.initialize(base); }
   target function void run() { if (s.sts() != 0) { s.poke(); } }
-}""", ["read 32 0x1004 0x5", "write 32 0x1004 0x1"], mem={0x1004: 5},
-        xfail=_on(["c"], _D2)),
+}""", ["read 32 0x1004 0x5", "write 32 0x1004 0x1"], mem={0x1004: 5}),
 
     # --- D3: bit and part selects (LRM 8.5.x; Table 21: unsigned, hi-lo+1) ----
     "a part select read": Case("""

@@ -21,7 +21,8 @@ from the model that found it.
 | F3 (D3): ast2ir keeps a select on a local/constant; `bit_select.py` reads it, every emitter renders it (read, and read-modify-write) | done |
 | F4 (D4): one pattern reading (`body_walker.match_values`) | done |
 | F7 (D7): `?:` in C and C++ | done |
-| F9 (D9), F2 (D2) | open |
+| F2 (D2): C calls a sub-component's operation on its handle; a register path through sub-components in C, C++ and Python | done |
+| F9 (D9) | open |
 
 Found on the way:
 
@@ -31,6 +32,17 @@ Found on the way:
   three. corpus `types.enum.match.001` now passes on op-model-py.
 * **C and C++ cannot lower `repeat (i : N)`** (`StmtFor`: "defines no
   stmt_for()"). Not in the report; not yet scheduled.
+* **C, from running the inheritance cases (`test_op_model_inherit_native`)
+  on it.** None of these is in the report, and none is scheduled yet:
+  * **A sub-component is constructed only if its parent's constructor calls
+    its `initialize`.** With no call, its field initializers never run:
+    `int a = 5;` reads 0, so `virtual dispatch` prints `101 110 110` where
+    PSS gives `106 117 117`. This one is SILENT. LRM 20.1.2 constructs every
+    instance.
+  * **A sub-component named `t` collides with the handle type.** The accessor
+    `<prefix>_t()` redeclares the typedef `<prefix>_t`.
+  * **`super.initialize(...)` in a constructor is not lowered.** It reports
+    "no function named `_pss_super_base_c_initialize`".
 
 T1d (a mutation check of the C base) is covered by history: the T1 cases were
 strict xfails on C before F1 and pass after it.

@@ -988,13 +988,28 @@ class _BodyEmitter(CallDispatch, BodyWalker):
         # `<group>.<reg>`. A one-element chain is a call on the GROUP itself
         # (`regs.set_handle(...)`), which is not a register access and must not
         # be judged as one.
-        if not chain or len(chain) < 2 or chain[0][0] not in self.reg_fields:
+        handle, prefix = self.h, self.prefix
+        if chain and chain[0][0] in self.subs:
+            # `s.a.STS.write_val(1)`: a register of a sub-component, reached
+            # through ITS accessor and ITS handle -- the accessor already adds
+            # that component's group base, so nothing is folded here.
+            handle, prefix, comp, chain = self._through_subs(chain)
+            if self.reg_map:
+                raise ValueError(
+                    f"a register of a sub-component, reached from "
+                    f"'{getattr(self.comp, 'name', '?')}', is not lowered "
+                    f"under the register-map link styles yet; call an "
+                    f"operation of the sub-component instead")
+            if not chain or len(chain) < 2 or \
+                    chain[0][0] not in _reg_group_fields(comp):
+                return None
+        elif not chain or len(chain) < 2 or chain[0][0] not in self.reg_fields:
             return None
 
         reg = chain[-1][0]
         segs = [c[0] for c in chain[:-1]]
         idx = [c[1] for c in chain if c[1] is not None]
-        base = accessor_base(self.prefix, segs, reg, self.style)
+        base = accessor_base(prefix, segs, reg, self.style)
         idx_args = "".join(f", {self.expr(i)}" for i in idx)
         args = [self.expr(a) for a in call.args]
 
@@ -1006,7 +1021,7 @@ class _BodyEmitter(CallDispatch, BodyWalker):
                     f"got {len(args)}")
             if self.reg_map:
                 return self._reg_map_access(chain, func.attr, args)
-            return self._reg_access(base, func.attr, idx_args, args)
+            return self._reg_access(base, func.attr, idx_args, args, handle)
 
         raise ValueError(
             f"unsupported register method '{func.attr}' on '{'.'.join(segs + [reg])}'. "
@@ -1078,8 +1093,28 @@ class _BodyEmitter(CallDispatch, BodyWalker):
         return (f"write{prim}({raw}, (read{prim}({raw}) & ~({mask}))"
                 f" | (({val}) & ({mask})))")
 
+    def _through_subs(self, chain):
+        """Follow the sub-component hops at the front of *chain*:
+        ``(handle, prefix, component, rest)``, the handle being
+        `&s->sub[i].inner` for the component the rest of the path is in."""
+        comp, prefix, path, k = self.comp, self.prefix, None, 0
+        subs = self.subs
+        while k < len(chain) and chain[k][0] in subs:
+            sub = subs[chain[k][0]]
+            if self.prefixes is None:
+                raise ValueError("a sub-component access needs the prefix map")
+            m = mangle(sub.name)
+            if chain[k][1] is not None:
+                m += f"[{self.expr(chain[k][1])}]"
+            path = f"{self.h}->{m}" if path is None else f"{path}.{m}"
+            comp = sub.dtype
+            prefix = self.prefixes[comp]
+            subs = {s.name: s for s in sub_components(comp)}
+            k += 1
+        return (f"&{path}" if path else self.h), prefix, comp, chain[k:]
+
     def _reg_access(self, base: str, method: str, idx_args: str,
-                    args) -> str:
+                    args, handle: Optional[str] = None) -> str:
         """One register access, through the funnel.
 
         The `_Acc` is looked up rather than reconstructed because a policy
@@ -1090,17 +1125,18 @@ class _BodyEmitter(CallDispatch, BodyWalker):
         accessors this component does not emit; the funnel then renders the
         plain accessor call, exactly as before.
         """
+        h = handle or self.h
         acc = self.accs.get(base)
         if acc is None:
-            return f"{self.mem.accessor(base, method)}({self.h}{idx_args}" + \
+            return f"{self.mem.accessor(base, method)}({h}{idx_args}" + \
                    "".join(f", {a}" for a in args) + ")"
         if method in ("read", "read_val"):
-            return self.mem.reg_read(acc, self.h, idx_args,
+            return self.mem.reg_read(acc, h, idx_args,
                                      raw=method.endswith("_val"))
         if method in ("write", "write_val"):
-            return self.mem.reg_write(acc, self.h, idx_args, args[0],
+            return self.mem.reg_write(acc, h, idx_args, args[0],
                                       raw=method.endswith("_val"))
-        return self.mem.reg_masked_write(acc, self.h, idx_args, args[0], args[1])
+        return self.mem.reg_masked_write(acc, h, idx_args, args[0], args[1])
 
     # expressions -----------------------------------------------------------
 
@@ -1339,6 +1375,17 @@ class _BodyEmitter(CallDispatch, BodyWalker):
         if name is not None and name in self.model_ops:
             return f"{self.style.symbol(self.prefix, mangle(name))}(" + \
                    ", ".join([self.h] + args) + ")"
+        # `s.poke()` / `ch[i].status()`: an operation of a sub-component, on
+        # that sub-component's handle. Its function is already emitted with
+        # the sub-component's API.
+        chain = (self._chain(func.value)
+                 if _dt_name(func) == "ExprAttribute" else None)
+        if chain and chain[0][0] in self.subs:
+            handle, prefix, comp, rest = self._through_subs(chain)
+            if not rest and any(f.name == func.attr
+                                for f in getattr(comp, "functions", []) or []):
+                return f"{self.style.symbol(prefix, mangle(func.attr))}(" + \
+                       ", ".join([handle] + args) + ")"
         # An `import target/solve function`: a bare call, and NO handle -- an
         # import is a platform function, not a method of this component, so
         # passing `s` would invent a parameter its declaration does not have.

@@ -1178,9 +1178,27 @@ class _BodyEmitter(CallDispatch, BodyWalker):
         if _dt_name(func) != "ExprAttribute":
             return None
         chain = self._chain(func.value)
+        recv, accs = "self", self.accs
+        subs = {s.name: s for s in sub_components(self.comp)}
+        if chain and chain[0][0] in subs:
+            # `s.a.STS.write_val(1)`: a register of a sub-component, through
+            # that object's own accessor -- which adds its own group base.
+            comp = self.comp
+            while chain and chain[0][0] in subs:
+                sc = subs[chain[0][0]]
+                recv += f".{mangle(sc.name)}"
+                if chain[0][1] is not None:
+                    recv += f"[{self.expr(chain[0][1])}]"
+                comp = sc.dtype
+                subs = {s.name: s for s in sub_components(comp)}
+                chain = chain[1:]
+            accs = accessor_map(comp)
+            if not chain or len(chain) < 2 or not any(
+                    p[0] == chain[0][0] for p in accs):
+                return None
         # A register lives inside a group, so its path is at least
         # `<group>.<reg>`. A one-element chain is a call on the GROUP.
-        if not chain or len(chain) < 2 or chain[0][0] not in self.reg_fields:
+        elif not chain or len(chain) < 2 or chain[0][0] not in self.reg_fields:
             return None
 
         reg = chain[-1][0]
@@ -1198,12 +1216,12 @@ class _BodyEmitter(CallDispatch, BodyWalker):
             raise ValueError(
                 f"register method '{method}' takes {want} argument(s), got "
                 f"{len(call.args)}")
-        acc = self.accs.get(tuple(segs) + (reg,))
+        acc = accs.get(tuple(segs) + (reg,))
         if acc is None:
             raise ValueError(
                 f"'{'.'.join(segs + [reg])}' is accessed as a register, but "
                 f"'{getattr(self.comp, 'name', '?')}' emits no accessor for it. "
-                f"Reachable: {', '.join('.'.join(p) for p in sorted(self.accs))}")
+                f"Reachable: {', '.join('.'.join(p) for p in sorted(accs))}")
         # A value written is converted to the register's width, like any
         # argument to a `bit[N]` parameter; a value struct is passed whole.
         val_t = PssType("int", acc.value_bits, False)
@@ -1213,7 +1231,7 @@ class _BodyEmitter(CallDispatch, BodyWalker):
         # `_addr` is never called from here -- a body says `regs.CSR.read()`,
         # never `regs.CSR.addr()`.
         return self._awaited(
-            f"self.{name}(" + ", ".join(idx + args) + ")", call)
+            f"{recv}.{name}(" + ", ".join(idx + args) + ")", call)
 
     # -- channels ------------------------------------------------------------
 

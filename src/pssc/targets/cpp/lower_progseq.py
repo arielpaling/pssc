@@ -505,10 +505,27 @@ class _BodyEmitter:
         if _dt_name(func) != "ExprAttribute":
             return None
         chain = self._chain(func.value)
+        rest, subs = chain, self.subs
+        while rest and rest[0][0] in subs:
+            # `s.a.STS.write_val(1)`: a register of a sub-component. Its
+            # register object was built at its own group's handle, so the
+            # path through the member is the whole access.
+            comp = subs[rest[0][0]].dtype
+            subs = {s.name: s for s in sub_components(comp)}
+            groups = {f.name for f in getattr(comp, "fields", []) or []
+                      if field_is_reg_group(f)}
+            rest = rest[1:]
+            if rest and rest[0][0] in groups and len(rest) >= 2:
+                chain = [[rest[0][0], None]] + rest[1:]
+                break
         # A register lives inside a group, so its path is at least
         # `<group>.<reg>`. A one-element chain is a call on the GROUP itself
         # (`regs.set_handle(...)`), which is not a register access.
-        if not chain or len(chain) < 2 or chain[0][0] not in self.reg_groups:
+        if rest is chain:
+            if not chain or len(chain) < 2 or \
+                    chain[0][0] not in self.reg_groups:
+                return None
+        elif not rest or len(rest) < 2:
             return None
 
         path = ".".join(c[0] for c in chain)
