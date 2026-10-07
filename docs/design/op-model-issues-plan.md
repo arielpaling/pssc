@@ -1,6 +1,6 @@
 # Op-model findings from a second field model: triage and plan
 
-Status: W1-W13 **done** (2026-10-07; W10 only as a refusal), W14-W15 planned; rulings in section 4. Source: a list of 14 findings (`issues`, untracked
+Status: W1-W14 **done** (2026-10-07; W10 only as a refusal), W15 planned; rulings in section 4. Source: a list of 14 findings (`issues`, untracked
 in the repo root), reported while projecting another field model through the
 op-model targets. Each finding came with the workaround the model had used.
 
@@ -188,9 +188,24 @@ is the base class's method). The sv goldens' channel loop becomes
 loop"; the strict xfail on "a constructor writes into a child before
 constructing it" is gone for SV.
 
-**W14. Local arrays (C, C++, SV).** Planned. `array<bit[8], 2> w;` in a
-function fails with an internal error ("unsupported C type for
-DataTypeArray") everywhere but Python.
+**W14. Local arrays (C, C++, SV).** Done. `array<bit[8], 2> w;` in a
+function failed with an internal error ("unsupported C type for
+DataTypeArray") everywhere but Python, and Python could not `foreach` over
+one. Each element starts at its type's default (LRM 8.1). An array assigned
+whole is a copy: C copies element by element (`_array_copy`; a side with a
+call is refused, since it would run once per element), C++ (`std::array`)
+and SV (unpacked arrays) assign by value, and Python, which aliased the list,
+now copies it (`v[:] = w`, and `_pss_copy` on struct elements). `foreach`
+takes its bound from the collection's type, a local's included. Matrix cases:
+"local arrays", "local arrays: enum elements, two dimensions, copied structs".
+
+Found along the way: an array PARAMETER or result. PSS passes it by handle
+(LRM 20.3.2). Python's list already is one; C and SV failed with an internal
+error, and C++ would now have compiled it as a copy and lost the callee's
+writes. The gate refuses it on those three
+(`validate_calls.array_signatures`, `OpModelTarget.supports_array_params`);
+matrix case "an array parameter". Lowering it (a pointer in C, `ref` in SV,
+a reference in C++) is not planned yet.
 
 **W15. Array initializers.** Planned, after W14: `{1, 2, 3}` as a field
 initializer, a local's initializer and an assigned value, with the element

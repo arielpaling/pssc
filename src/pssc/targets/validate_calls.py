@@ -433,10 +433,33 @@ def array_literals(comps) -> List[str]:
     return out
 
 
+def array_signatures(comps) -> List[str]:
+    """Each function with an array parameter or result, as
+    ``"<comp>::<fn>: an array parameter 'v'"`` / ``"...: an array result"``.
+
+    PSS passes an aggregate by handle (LRM 20.3.2). A target that cannot
+    refuses it here: C and SV failed with an internal error, and C++'s
+    `std::array` is a value, so a callee's writes would be lost."""
+    out: List[str] = []
+    for comp in comps:
+        cname = _name_of(comp)
+        for fn in getattr(comp, "functions", None) or []:
+            for a in (getattr(getattr(fn, "args", None), "args", None)
+                      or []):
+                if _dt_name(getattr(a, "annotation", None)) \
+                        == "DataTypeArray":
+                    out.append(f"{cname}::{fn.name}: an array parameter "
+                               f"'{a.arg}' is not supported yet")
+            if _dt_name(getattr(fn, "returns", None)) == "DataTypeArray":
+                out.append(f"{cname}::{fn.name}: an array result is not "
+                           f"supported yet")
+    return out
+
+
 def gate(root, ctx, target: str, language: str, ctor_names=None,
          entries=(), pkg_functions: bool = False,
          init_blocks: bool = False, extra_components=(),
-         native: bool = False) -> None:
+         native: bool = False, array_params: bool = False) -> None:
     """Run :func:`validate_calls` and raise if anything is unlowerable.
 
     Every operation-model backend calls this as its first act, BEFORE any file
@@ -457,6 +480,13 @@ def gate(root, ctx, target: str, language: str, ctor_names=None,
         raise CompileError(
             f"{len(lists)} array initializer(s) cannot be lowered to "
             f"{language} yet", lists)
+    if not array_params:
+        sigs = array_signatures(_with_extra(_components(root),
+                                            extra_components))
+        if sigs:
+            raise CompileError(
+                f"{len(sigs)} array parameter(s) or result(s) cannot be "
+                f"lowered to {language} yet", sigs)
     bad = validate_calls(root, ctx, target, ctor_names=ctor_names,
                          entries=entries, pkg_functions=pkg_functions,
                          init_blocks=init_blocks,

@@ -826,6 +826,71 @@ component pss_top {""" + _ONE + """
   }
 }""", ["write 32 0x1004 0xf"]),
 
+    # --- Arrays of data in a function ------------------------------------------
+    # A local array starts with each element at its type's default (LRM 8.1),
+    # a struct element with its own defaults; it is indexed, iterated, and
+    # handed by value to an assignment. C, C++ and SV failed with an internal
+    # error ("unsupported C type for DataTypeArray").
+    # w: {0, 9}, v = w; v[0] = 2: 9 + 2 + 7 + (0 + 9) = 0x1b.
+    "local arrays": Case("""
+struct p_s { bit[8] x; bit[8] y = 7; }
+component pss_top {""" + _ONE + """
+  target function void run() {
+    array<bit[8], 2> w;
+    array<bit[8], 2> v;
+    array<p_s, 2> ps;
+    bit[16] raw[3];
+    bit[32] t = 0;
+    w[1] = 9;
+    v = w;
+    v[0] = 2;
+    raw[2] = w[0];
+    foreach (w[i]) { t += w[i]; }
+    a.STS.write_val(v[1] + v[0] + ps[1].y + t + raw[2]);
+  }
+}""", ["write 32 0x1004 0x1b"]),
+
+    # An enum element starts at its first item, a 2-D array is copied whole,
+    # and an array of structs copied into a field is a copy: writing the
+    # local afterwards leaves the field alone. ae: 3; m2[1][0] = 4 copied to
+    # n2; keep[1].x = 5, then l[1].x = 9: 3 + 4 + 5 + 7 = 0x13.
+    "local arrays: enum elements, two dimensions, copied structs": Case("""
+enum m_e { M_A = 3, M_B = 1 }
+struct p_s { bit[8] x; bit[8] y = 7; }
+component pss_top {""" + _ONE + """
+  array<p_s, 2> keep;
+  target function void run() {
+    array<m_e, 2> ae;
+    array<array<bit[8], 2>, 2> m2;
+    array<array<bit[8], 2>, 2> n2;
+    array<p_s, 2> l;
+    m2[1][0] = 4;
+    n2 = m2;
+    m2[1][0] = 8;
+    l[1].x = 5;
+    keep = l;
+    l[1].x = 9;
+    a.STS.write_val(ae[1] + n2[1][0] + keep[1].x + keep[0].y);
+  }
+}""", ["write 32 0x1004 0x13"]),
+
+    # PSS passes an aggregate by handle (LRM 20.3.2): the callee's write is
+    # the caller's array. 3 + 4 = 7, then w[0] is 4: 0x7, 0x4. Python's list
+    # is a handle already; C and SV failed with an internal error, and C++'s
+    # `std::array` would have been a copy.
+    "an array parameter": Case("""
+component pss_top {""" + _ONE + """
+  function bit[8] sum(array<bit[8], 2> v) { v[0] = 4; return v[0] + v[1]; }
+  target function void run() {
+    array<bit[8], 2> w;
+    w[1] = 3;
+    a.STS.write_val(sum(w));
+    a.STS.write_val(w[0]);
+  }
+}""", ["write 32 0x1004 0x7", "write 32 0x1004 0x4"],
+        refused=_on(("c", "cpp", "sv"),
+                    Refused([r"pss_top::sum: an array parameter 'v'"]))),
+
     # --- Array initializers ------------------------------------------------------
     # Not rendered by any target yet. Each failed with an internal error
     # naming no line of the model; it is refused, naming the field and the

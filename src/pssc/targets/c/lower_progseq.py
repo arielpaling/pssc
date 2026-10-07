@@ -507,21 +507,44 @@ def data_members(comp) -> List[object]:
     return out
 
 
-def _member_decl(f) -> str:
-    """One struct-member declaration, arrays included.
+def c_declarator(dtype, name: str, what: str = "array") -> str:
+    """``T name`` for a value of ``dtype``, arrays (of arrays) included:
+    `uint8_t w[2]`, `p_s m[2][3]`.
 
-    C puts the bound after the name, so an array member cannot be spelled by
+    C puts the bound after the name, so an array cannot be spelled by
     `c_type()` alone -- which is why this is not one more branch there.
     """
-    dt = f.datatype
-    if _dt_name(dt) == "DataTypeArray":
+    dims = ""
+    dt = dtype
+    while _dt_name(dt) == _DT_ARRAY:
         n = _array_size(dt)
         if n is None:
             raise ValueError(
-                f"array member '{f.name}' has no folded size; C needs a bound "
-                "and there is nothing to derive one from.")
-        return f"{c_type(dt.element_type)} {mangle(f.name)}[{n}];"
-    return f"{c_type(dt)} {mangle(f.name)};"
+                f"{what} '{name}' has no folded size; C needs a bound and "
+                "there is nothing to derive one from.")
+        dims += f"[{n}]"
+        dt = dt.element_type
+    return f"{c_type(dt)} {name}{dims}"
+
+
+def _member_decl(f) -> str:
+    """One struct-member declaration, arrays included."""
+    return c_declarator(f.datatype, mangle(f.name), "array member") + ";"
+
+
+def _array_copy(dst: str, src: str, dtype, pad: str,
+                depth: int = 0) -> List[str]:
+    """``dst = src`` for arrays of ``dtype``: C assigns no array, so element
+    by element, one loop per dimension. Both sides are evaluated once per
+    element, so neither may contain a call (the caller refuses one)."""
+    if _dt_name(dtype) != _DT_ARRAY:
+        return [f"{pad}{dst} = {src};"]
+    n = _array_size(dtype)
+    i = f"_pssc_i{depth}"
+    body = _array_copy(f"{dst}[{i}]", f"{src}[{i}]", dtype.element_type,
+                       pad + "    ", depth + 1)
+    return ([f"{pad}for (unsigned {i} = 0; {i} < {n}u; {i}++) {{"]
+            + body + [f"{pad}}}"])
 
 
 def _field_defaults(comp, target: str = HANDLE) -> List[str]:
@@ -1758,7 +1781,8 @@ class _BodyEmitter(CIntSemantics, CallDispatch, BodyWalker):
 
     def stmt_ann_assign(self, s, ind: int) -> List[str]:
         pad = self.pad(ind)
-        ct = c_type(s.annotation)
+        ct = (None if _dt_name(s.annotation) == _DT_ARRAY
+              else c_type(s.annotation))
         name = self.expr(s.target)
         # `(void)x;` immediately after the declaration, which is what
         # silences -Wunused-but-set-variable (the placement matters: after
@@ -1776,6 +1800,15 @@ class _BodyEmitter(CIntSemantics, CallDispatch, BodyWalker):
             return [f"{pad}uint64_t {name}{init};"
                     f"   /* PSS: {ct} -- widened: channel try_get output */"
                     ] + tail
+        if _dt_name(s.annotation) == _DT_ARRAY:
+            decl = c_declarator(s.annotation, name, "local array")
+            if getattr(s, "value", None) is not None:
+                return ([f"{pad}{decl};"]
+                        + self._array_assign(name, s.value, s.annotation, pad)
+                        + tail)
+            # Each element its type's default (LRM 8.1); `{0}` zeroes all.
+            init = _default_init(s.annotation) or "{0}"
+            return [f"{pad}{decl} = {init};"] + tail
         if getattr(s, "value", None) is not None:
             value = self.convert_to(s.value,
                                     self.types.of_datatype(s.annotation))
@@ -1799,6 +1832,10 @@ class _BodyEmitter(CIntSemantics, CallDispatch, BodyWalker):
     def stmt_assign(self, s, ind: int) -> List[str]:
         pad = self.pad(ind)
         tgt = s.targets[0]
+        tt = self.types.type_of(tgt)
+        if tt is not None and tt.kind == "array":
+            return self._array_assign(self.expr(tgt), s.value, tt.dtype, pad,
+                                      tgt)
         sel = bit_select(tgt, self.types)
         if sel is not None:
             tgt, value = sel.base, self._select_assign_value(sel, s.value)
@@ -1810,6 +1847,21 @@ class _BodyEmitter(CIntSemantics, CallDispatch, BodyWalker):
                 ct, local, field = sf
                 return [f"{pad}{ct}_{field}_set(&{local}, {value});"]
         return [f"{pad}{self.expr(tgt)} = {value};"]
+
+    def _array_assign(self, dst: str, value, dtype, pad: str,
+                      target=None) -> List[str]:
+        """An array assigned whole (`v = w;`), element by element."""
+        if _has_call(value) or (target is not None and _has_call(target)):
+            raise ValueError(
+                f"in '{getattr(self.fn, 'name', '?')}': an array assigned "
+                "from or into an expression with a call is not supported in "
+                "C: it is copied element by element, and the call would run "
+                "once per element.")
+        if _array_size(dtype) is None:
+            raise ValueError(
+                f"cannot assign array '{dst}': its size is not known at "
+                "generation time.")
+        return _array_copy(dst, self.expr(value), dtype, pad)
 
     def stmt_aug_assign(self, s, ind: int) -> List[str]:
         """`x op= e` is `x = x op e` (8.3), converted back to x's type.
@@ -1947,14 +1999,10 @@ class _BodyEmitter(CIntSemantics, CallDispatch, BodyWalker):
         return lines
 
     def _iter_dtype(self, s):
-        """Declared type of a `foreach` collection, when it is a member."""
-        it = s.iter
-        if _dt_name(it) == "ExprAttribute" and \
-                _dt_name(it.value) == "TypeExprRefSelf":
-            for f in getattr(self.comp, "fields", []):
-                if f.name == it.attr:
-                    return f.datatype
-        return None
+        """Declared type of a `foreach` collection: a field, a local, an
+        element of either."""
+        t = self.types.type_of(s.iter)
+        return t.dtype if t is not None and t.kind == "array" else None
 
     def stmt_match(self, s, ind: int) -> List[str]:
         """PSS `match` -> C `switch`.

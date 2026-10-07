@@ -460,6 +460,12 @@ class OpModelTarget(Target):
     #: model that has them (`validate_calls.exec_blocks`).
     supports_init_blocks: bool = False
 
+    #: Whether this backend passes an array parameter, and returns an array
+    #: result, as PSS does: by handle (LRM 20.3.2). A backend that does not
+    #: refuses a function with one (`validate_calls.array_signatures`); C++'s
+    #: `std::array` would compile, by value, and lose the callee's writes.
+    supports_array_params: bool = False
+
     #: Whether this backend delegates memory primitives -- and the register
     #: accesses built on them -- to the assigned executor's overrides (LRM
     #: 21.13.9.5), and renders `set_executor`. A backend that does not refuses
@@ -749,6 +755,7 @@ class OpModelTarget(Target):
                       for fn in e.functions],
              pkg_functions=self.supports_package_functions,
              init_blocks=self.supports_init_blocks,
+             array_params=self.supports_array_params,
              extra_components=model.base_classes,
              native=self.native_inheritance)
         self.check_executors(model)

@@ -165,7 +165,30 @@ def cpp_type(dtype) -> str:
         if nm == "addr_handle_t":
             return "pssc::addr_t"
         return c_struct_name(dtype)
+    if cn == _DT_ARRAY:
+        # `std::array`, which unlike C's `T x[N]` is a value type: it can be
+        # assigned, returned and default-initialised like everything else.
+        n = _array_size(dtype)
+        if n is None:
+            raise ValueError("an array with no folded size; the generated "
+                             "declaration needs a bound.")
+        return f"std::array<{cpp_type(dtype.element_type)}, {n}>"
     raise ValueError(f"unsupported C++ type for {cn}")
+
+
+def _array_init(dtype) -> str:
+    """The initializer giving an array its elements' defaults: `{}` (each
+    element value-initialised, a struct by its default member initializers)
+    unless an element is an enum whose first item is not 0 (LRM 7.5). Double
+    braces at each level, so no brace elision decides what a brace means."""
+    def init(dt) -> Optional[str]:
+        if _dt_name(dt) == _DT_ARRAY:
+            sub = init(dt.element_type)
+            if sub is None:
+                return None
+            return "{{" + ", ".join([sub] * _array_size(dt)) + "}}"
+        return enum_first_item(dt)
+    return init(dtype) or "{}"
 
 
 # --- component introspection ------------------------------------------------
@@ -991,6 +1014,10 @@ class _BodyEmitter(CIntSemantics):
         tail = ([f"{pad}(void){name};   // PSS assigns it and never reads it"]
                 if getattr(s.target, "name", None) in self.write_only_locals
                 else [])
+        if _dt_name(s.annotation) == _DT_ARRAY:
+            if getattr(s, "value", None) is not None:
+                return [f"{pad}{ct} {name} = {self.expr(s.value)};"] + tail
+            return [f"{pad}{ct} {name}{_array_init(s.annotation)};"] + tail
         if getattr(s, "value", None) is not None:
             return [f"{pad}{ct} {name} = "
                     f"{self._coerce(s.value, s.annotation)};"] + tail
@@ -1056,14 +1083,10 @@ class _BodyEmitter(CIntSemantics):
         return lines
 
     def _iter_dtype(self, s):
-        """Declared type of a `foreach` collection, when it is a member."""
-        it = s.iter
-        if _dt_name(it) == "ExprAttribute" and \
-                _dt_name(it.value) == "TypeExprRefSelf":
-            for f in getattr(self.comp, "fields", []):
-                if f.name == it.attr:
-                    return f.datatype
-        return None
+        """Declared type of a `foreach` collection: a field, a local, an
+        element of either."""
+        t = self.types.type_of(s.iter)
+        return t.dtype if t is not None and t.kind == "array" else None
 
     def _match(self, s, ind: int) -> List[str]:
         """PSS `match` -> `switch`, with every arm breaking.
@@ -1333,15 +1356,11 @@ def _data_member(f) -> str:
     """
     dt = f.datatype
     if _dt_name(dt) == _DT_ARRAY:
-        n = _array_size(dt)
-        if n is None:
+        if _array_size(dt) is None:
             raise ValueError(
                 f"array member '{f.name}' has no folded size; the generated "
                 f"member needs a bound.")
-        first = enum_first_item(dt.element_type)
-        init = "{" + ", ".join([first] * n) + "}" if first else "{}"
-        return (f"std::array<{cpp_type(dt.element_type)}, {n}> "
-                f"{mangle(f.name)}{init};")
+        return f"{cpp_type(dt)} {mangle(f.name)}{_array_init(dt)};"
     first = enum_first_item(dt)
     if first is not None:
         # An enum starts at its first item (7.5), which need not be 0.

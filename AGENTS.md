@@ -99,6 +99,11 @@ sub-component's construct) and then `<p>_pss_ctor` (the constructor body). A
 `sub.initialize(...)` in a constructor is the child's `_pss_ctor` alone; the
 child was constructed already, whether or not anything calls it.
 
+An array is a value (LRM 8.1): assigned whole, it is copied (C element by
+element, Python by slice and `_pss_copy`). An array parameter or result is
+passed by handle (20.3.2); only Python does so, and the gate refuses one
+elsewhere (`validate_calls.array_signatures`).
+
 A `solve function` other than the constructor is a private operation on every
 target (user ruling, 2026-10-07): the gate lets only solve context call one
 (`validate_calls.solve_ops`), and its body renders as a constructor's. C makes

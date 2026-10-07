@@ -205,9 +205,9 @@ def default_value(dtype, type_map=None) -> str:
         if n is None:
             return "[]"
         elem = default_value(getattr(dt, "element_type", None), type_map)
-        # A struct element is a VALUE per element; `[x] * n` would be n
-        # names for one object.
-        if elem.endswith("()"):
+        # A struct or array element is a VALUE per element; `[x] * n` would
+        # be n names for one object.
+        if elem.endswith("()") or elem.startswith("["):
             return f"[{elem} for _ in range({n})]"
         return f"[{elem}] * {n}"
     if cn in (_DT_INT, _DT_BOOL, _DT_CHANDLE):
@@ -1371,6 +1371,10 @@ class _BodyEmitter(IntSemantics, CallDispatch, BodyWalker):
         target = self.types.of_datatype(s.annotation)
         if value is not None and self._struct_dtype(target) is not None:
             return [f"{pad}{name} = {self._struct_value(value, target)}"]
+        if value is not None and target is not None \
+                and target.kind == "array":
+            return [f"{pad}{name} = "
+                    f"{self._array_copy(self.expr(value), target.dtype)}"]
         with self._no_hoist_as_is(value, target):
             init = (self.convert_to(value, target) if value is not None
                     else self._zero(s.annotation))
@@ -1439,6 +1443,29 @@ class _BodyEmitter(IntSemantics, CallDispatch, BodyWalker):
         cls = value_class_name(self._struct_dtype(target))
         return f"{cls}._pss_copy({self.expr(e)})"
 
+    # -- array values (LRM 8.1) ------------------------------------------------
+    #
+    # An array is a value too, and a list a reference: `v = w` followed by
+    # `v[0] = 2` would write `w`. Assigned whole, an array is copied, down to
+    # its struct and array elements.
+
+    def _array_copy(self, text: str, dtype, depth: int = 0) -> str:
+        """*text*, an array of *dtype*, as a list nothing else holds."""
+        elem = self.types.resolve(getattr(dtype, "element_type", None))
+        e = f"_e{depth}"
+        inner = self._value_copy(e, elem, depth + 1)
+        return f"list({text})" if inner == e else \
+            f"[{inner} for {e} in {text}]"
+
+    def _value_copy(self, text: str, dtype, depth: int) -> str:
+        cn = _dt_name(dtype)
+        if cn == _DT_ARRAY:
+            return self._array_copy(text, dtype, depth)
+        sd = self._struct_dtype(self.types.of_datatype(dtype))
+        if sd is not None:
+            return f"{value_class_name(sd)}._pss_copy({text})"
+        return text
+
     def stmt_assign(self, s, ind: int) -> List[str]:
         pad = self.pad(ind)
         tgt = s.targets[0]
@@ -1446,6 +1473,15 @@ class _BodyEmitter(IntSemantics, CallDispatch, BodyWalker):
         if sel is not None:
             return self._select_assign(sel, s.value, pad)
         target = self.types.type_of(tgt)
+        if target is not None and target.kind == "array":
+            # In place, as a struct is: an array parameter is the caller's
+            # (20.3.2). A slice assignment copies the list; its elements are
+            # copied when they are values of their own.
+            value = self.expr(s.value)
+            elem = self.types.resolve(target.dtype.element_type)
+            if self._value_copy("_e0", elem, 1) != "_e0":
+                value = self._array_copy(value, target.dtype)
+            return [f"{pad}{self.expr(tgt)}[:] = {value}"]
         if self._struct_dtype(target) is not None:
             # Into the target, in place: that is what an assignment to an
             # aggregate parameter means, and for anything else it is the same
@@ -1698,13 +1734,16 @@ class _BodyEmitter(IntSemantics, CallDispatch, BodyWalker):
         return [f"{pad}for {idx} in range({n}):", bind] + body
 
     def _iter_dtype(self, s):
+        """Declared type of a `foreach` collection: a field (a register or
+        sub-component array included), a local, an element of either."""
         it = s.iter
         if (_dt_name(it) == "ExprAttribute"
                 and _dt_name(it.value) == "TypeExprRefSelf"):
             for f in getattr(self.comp, "fields", []):
                 if f.name == it.attr:
                     return f.datatype
-        return None
+        t = self.types.type_of(it)
+        return t.dtype if t is not None and t.kind == "array" else None
 
     def stmt_match(self, s, ind: int) -> List[str]:
         """PSS `match` -> an if/elif chain over a bound subject.

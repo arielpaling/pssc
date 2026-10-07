@@ -64,6 +64,7 @@ class PyProgSeqTarget(OpModelTarget):
     native_inheritance = True
     supports_package_functions = True
     supports_init_blocks = True
+    supports_array_params = True     # a list is passed by handle already
     supports_executor_delegation = True
 
     #: The DEFAULT form's capabilities -- what a bare command line gets. The

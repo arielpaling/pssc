@@ -1022,8 +1022,20 @@ class _BodyEmitter(BodyWalker):
         # splitting it in two would move the assignment past that boundary.
         if _dt_name(s.target) == "ExprRefLocal":
             self.local_types[s.target.name] = s.annotation
-        decl = f"{pad}{sv_type(s.annotation)} {self.expr(s.target)}"
+        decl = pad + sv_declarator(s.annotation, self.expr(s.target),
+                                   "local array")
         v = getattr(s, "value", None)
+        if v is None and _dt_name(s.annotation) == "DataTypeArray":
+            # Each element its type's default (8.1); an enum's is its first
+            # item, and an SV enum element starts at 0.
+            first = enum_first_item(self.types.resolve(
+                _array_leaf(s.annotation)))
+            if first is None:
+                return self._declare(s, decl, [])
+            fill = f"'{{default: {first}}}"
+            return self._declare(
+                s, decl, [f"{pad}{self.expr(s.target)} = {fill};"],
+                f"{decl} = {fill};")
         if v is None:
             # An enum's default is its FIRST item (7.5), which need not be 0;
             # an SV enum variable starts at 0 whatever its items are.
@@ -1049,6 +1061,16 @@ class _BodyEmitter(BodyWalker):
         if rewritten is not None:
             return [f"{decl};"] + rewritten
         return [f"{decl} = {self.value_of(s.annotation, v)};"]
+
+    def _declare(self, s, decl: str, sets: List[str],
+                 inline: Optional[str] = None) -> List[str]:
+        """``decl``, then the lines ``sets`` giving it its value; as one
+        declaration-with-initializer, ``inline``, where the declaration is
+        not hoisted to the top of its block (`enter_block`)."""
+        if self._block is not None and id(s) in self._block[0]:
+            self._block[1].append(f"{decl};")
+            return sets
+        return [inline] if inline is not None else [f"{decl};"] + sets
 
     def stmt_assign(self, s, ind: int) -> List[str]:
         pad = self.pad(ind)
@@ -1617,20 +1639,35 @@ def _data_fields(comp) -> List[object]:
     return out
 
 
+def sv_declarator(dtype, name: str, what: str = "array") -> str:
+    """``T name`` for a value of ``dtype``; an array's bounds (`[2][3]`) go
+    after its name, an unpacked array being a value SV assigns whole."""
+    dims = ""
+    dt = dtype
+    while _dt_name(dt) == "DataTypeArray":
+        try:
+            n = int(getattr(dt, "size", None))
+        except (TypeError, ValueError):
+            n = -1
+        if n < 0:
+            raise ValueError(
+                f"{what} '{name}' has no folded size; SV needs a bound and "
+                "there is nothing to derive one from.")
+        dims += f"[{n}]"
+        dt = dt.element_type
+    return f"{sv_type(dt)} {name}{dims}"
+
+
+def _array_leaf(dtype):
+    """The element type an array (of arrays) bottoms out in."""
+    while _dt_name(dtype) == "DataTypeArray":
+        dtype = dtype.element_type
+    return dtype
+
+
 def _data_decl(f, name: str) -> str:
-    """One data member's declaration; an array's bound goes after its name."""
-    dt = f.datatype
-    if _dt_name(dt) != "DataTypeArray":
-        return f"{sv_type(dt)} {name};"
-    try:
-        n = int(getattr(dt, "size", None))
-    except (TypeError, ValueError):
-        n = -1
-    if n < 0:
-        raise ValueError(
-            f"array member '{f.name}' has no folded size; SV needs a bound "
-            "and there is nothing to derive one from.")
-    return f"{sv_type(dt.element_type)} {name}[{n}];"
+    """One data member's declaration."""
+    return sv_declarator(f.datatype, name, "array member") + ";"
 
 
 def _ctor(comp, ctor_names=None):
