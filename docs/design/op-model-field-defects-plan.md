@@ -41,7 +41,8 @@ Found on the way:
   * Every other change is equivalent in value: a cast written as a mask, or a
     64-bit literal suffix.
 * **C and C++ cannot lower `repeat (i : N)`** (`StmtFor`: "defines no
-  stmt_for()"). Not in the report; not yet scheduled.
+  stmt_for()"). Not in the report. FIXED as W4 of
+  `op-model-issues-plan.md`.
 * **C, from running the inheritance cases (`test_op_model_inherit_native`)
   on it.** None of these is in the report, and none is scheduled yet:
   * **A sub-component is constructed only if its parent's constructor calls

@@ -43,7 +43,7 @@ from ..body_walker import (BodyWalker, CallDispatch, match_values,
 from ..bit_select import bit_select
 from ..call_legality import Ctx
 from ..expr_types import (CONTEXT_BINARY, CONTEXT_UNARY, LEFT_TYPED,
-                          RELATIONAL, PssType, assign_source_type, is_integral)
+                          RELATIONAL, INT, PssType, assign_source_type, is_integral)
 from ..int_semantics import IntSemantics, _Val, _br
 from .. import group_binding
 from ..group_binding import group_fields
@@ -1882,6 +1882,37 @@ class _BodyEmitter(CIntSemantics, CallDispatch, BodyWalker):
         return [f"{self.pad(ind)}continue;"]
 
     # compound statements ---------------------------------------------------
+
+    def stmt_for(self, s, ind: int) -> List[str]:
+        """`repeat ([i :] n) { ... }` (LRM 20.7.6) -> a counted `for`.
+
+        The count is evaluated once, before the first iteration, and a count
+        of zero or less runs none: it is held in a local, because a `for`
+        condition is re-evaluated. The index is an `int` counting from 0,
+        scoped to the loop.
+        """
+        pad = self.pad(ind)
+        count = self.expr(s.iter)
+        k = self._repeat_n = getattr(self, "_repeat_n", -1) + 1
+        n = f"_pssc_n{k}"
+        name = getattr(getattr(s, "target", None), "name", None)
+        if name is None:
+            return ([f"{pad}for (int64_t {n} = {count}; {n} > 0; {n}--) {{"]
+                    + self.stmts(s.body, ind + 1) + [f"{pad}}}"])
+        idx = self.expr(s.target)
+        had, prev = name in self.types.loop_vars, self.types.loop_vars.get(name)
+        self.types.loop_vars[name] = INT
+        try:
+            body = self.stmts(s.body, ind + 2)
+        finally:
+            if had:
+                self.types.loop_vars[name] = prev
+            else:
+                del self.types.loop_vars[name]
+        return ([f"{pad}{{",
+                 f"{pad}    int64_t {n} = {count};",
+                 f"{pad}    for (int {idx} = 0; {idx} < {n}; {idx}++) {{"]
+                + body + [f"{pad}    }}", f"{pad}}}"])
 
     def stmt_foreach(self, s, ind: int) -> List[str]:
         """`foreach (a[i]) { ... }` -> an indexed `for`.

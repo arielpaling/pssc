@@ -180,11 +180,14 @@ component pss_top {{
 }}""")
 
 
-def test_a_backend_without_the_loop_refuses_it(tmp_path):
-    """op-model-c has no `stmt_for` yet. It says so, and emits nothing."""
-    with pytest.raises(Exception, match="stmt_for"):
-        _compile(tmp_path, """
+def test_op_model_c_lowers_the_loop_too(tmp_path):
+    """op-model-c renders `repeat` as a counted `for`, its count held once.
+    What it does is held to a trace in the construct matrix
+    ("repeat: counted, indexed, nested, empty")."""
+    out = _compile(tmp_path, """
 component pss_top {
   int t;
   target function void g() { repeat (4) { t = t + 1; } }
-}""", target="op-model-c")
+}""", target="op-model-c", c_prefix="pss_top")
+    assert "for (int64_t _pssc_n0 = 4; _pssc_n0 > 0; _pssc_n0--) {" in \
+        (out / "pss_top.c").read_text()

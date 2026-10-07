@@ -76,8 +76,10 @@ import-API section, beside the other platform functions the model calls,
 with `-Werror=implicit-function-declaration`, which the trace harness already
 does with `-Werror`; add a matrix option so a case can set `--yield import`.
 
-**W4. `repeat (N)` and `repeat (i : N)` in C and C++.** This was item 2 of the
-earlier list. Add `stmt_for` to the C `_BodyEmitter` (C++ inherits it). The
+**W4. `repeat (N)` and `repeat (i : N)` in C and C++.** DONE: C's
+`stmt_for` and C++'s `_for` (C++ has its own statement dispatch; it does not
+inherit C's). Matrix case: "repeat: counted, indexed, nested, empty". Planned:
+this was item 2 of the earlier list. The
 counter is a local of the PSS index type, and the count is evaluated once
 before the first iteration, so it is hoisted into a temporary when it is not a constant. A
 `break`/`continue` already lowers. Matrix cases: a constant count, a count from

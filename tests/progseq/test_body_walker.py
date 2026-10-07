@@ -168,7 +168,7 @@ def test_the_scans_are_measured_on_every_operation(c_emitters):
 _C_STMT_KINDS = {
     "StmtAnnAssign", "StmtAssign", "StmtAugAssign", "StmtExpr", "StmtReturn",
     "StmtIf", "StmtRepeatWhile", "StmtWhile", "StmtBreak", "StmtContinue",
-    "StmtForeach", "StmtMatch", "StmtYield",
+    "StmtFor", "StmtForeach", "StmtMatch", "StmtYield",
 }
 
 _C_EXPR_KINDS = {
@@ -249,9 +249,7 @@ def test_the_two_emitters_render_the_same_statement_kinds():
     # `super;` is legal only in an exec block, and SV renders `exec init_down`
     # / `init_up` where C refuses them (`supports_init_blocks`). That is a
     # difference in what the targets ACCEPT, not in how the walk is shared.
-    # So is `repeat` (`StmtFor`): SV renders it, which the compliance tier's
-    # loop tests need; C does not yet.
-    assert sv_stmts == _C_STMT_KINDS | {"StmtSuper", "StmtFor"}
+    assert sv_stmts == _C_STMT_KINDS | {"StmtSuper"}
 
 
 def test_the_two_emitters_indent_differently():

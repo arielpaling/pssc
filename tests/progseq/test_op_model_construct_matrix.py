@@ -743,6 +743,30 @@ component pss_top {""" + _ONE + """
   }
 }""", ["write 32 0x1004 0x12"]),
 
+    # --- repeat (LRM 20.7.6) -------------------------------------------------------
+    # The count is evaluated once: the body raising `n` does not add
+    # iterations (0, 1, 2). Nested, zero, and break/continue (10, then 12).
+    # C and C++ had no lowering for `repeat` at all.
+    "repeat: counted, indexed, nested, empty": Case("""
+component pss_top {""" + _ONE + """
+  int n = 3;
+  target function void run() {
+    repeat (i : n) { n = n + 1; a.STS.write_val(i); }
+    repeat (2) { repeat (j : 2) { a.CTL.write_val(j); } }
+    repeat (0) { a.STS.write_val(99); }
+    repeat (k : 5) {
+      if (k == 1) { continue; }
+      if (k == 3) { break; }
+      a.STS.write_val(k + 10);
+    }
+    a.STS.write_val(n);
+  }
+}""", ["write 32 0x1004 0x0", "write 32 0x1004 0x1", "write 32 0x1004 0x2",
+       "write 32 0x1000 0x0", "write 32 0x1000 0x1",
+       "write 32 0x1000 0x0", "write 32 0x1000 0x1",
+       "write 32 0x1004 0xa", "write 32 0x1004 0xc",
+       "write 32 0x1004 0x6"]),
+
     # --- A register value on the API -------------------------------------------
     # A layout is implementation until the API names it: here an operation
     # returns one, another takes one, and the root holds one. C kept every

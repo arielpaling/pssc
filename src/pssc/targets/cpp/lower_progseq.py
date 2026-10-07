@@ -47,7 +47,7 @@ from ..c.lower_progseq import (
     c_select_read, c_select_write, CIntSemantics, _c_carrier,
 )
 from ..expr_types import (CONTEXT_BINARY, CONTEXT_UNARY, LEFT_TYPED,
-                          RELATIONAL, is_integral)
+                          INT, RELATIONAL, is_integral)
 from ..c.lower_reg_model import c_struct_name, _prim_bits, _strip_pkg
 
 _DT_STRUCT = "DataTypeStruct"
@@ -952,6 +952,8 @@ class _BodyEmitter(CIntSemantics):
             return [f"{pad}break;"]
         if cn == "StmtContinue":
             return [f"{pad}continue;"]
+        if cn == "StmtFor":
+            return self._for(s, ind)
         if cn == "StmtForeach":
             return self._foreach(s, ind)
         if cn == "StmtMatch":
@@ -980,6 +982,37 @@ class _BodyEmitter(CIntSemantics):
             # An enum starts at its first item (7.5), which need not be 0.
             return [f"{pad}{ct} {name} = {first};"] + tail
         return [f"{pad}{ct} {name}{{}};"] + tail
+
+    def _for(self, s, ind: int) -> List[str]:
+        """`repeat ([i :] n) { ... }` (LRM 20.7.6) -> a counted `for`.
+
+        The count is evaluated once, before the first iteration, and a count
+        of zero or less runs none: it is held in a local, because a `for`
+        condition is re-evaluated. The index is an `int` counting from 0,
+        scoped to the loop.
+        """
+        pad = "    " * ind
+        count = self.expr(s.iter)
+        k = self._repeat_n = getattr(self, "_repeat_n", -1) + 1
+        n = f"_pssc_n{k}"
+        name = getattr(getattr(s, "target", None), "name", None)
+        if name is None:
+            return ([f"{pad}for (std::int64_t {n} = {count}; {n} > 0; --{n}) {{"]
+                    + self.stmts(s.body, ind + 1) + [f"{pad}}}"])
+        idx = self.expr(s.target)
+        had, prev = name in self.types.loop_vars, self.types.loop_vars.get(name)
+        self.types.loop_vars[name] = INT
+        try:
+            body = self.stmts(s.body, ind + 2)
+        finally:
+            if had:
+                self.types.loop_vars[name] = prev
+            else:
+                del self.types.loop_vars[name]
+        return ([f"{pad}{{",
+                 f"{pad}    const std::int64_t {n} = {count};",
+                 f"{pad}    for (int {idx} = 0; {idx} < {n}; ++{idx}) {{"]
+                + body + [f"{pad}    }}", f"{pad}}}"])
 
     def _foreach(self, s, ind: int) -> List[str]:
         """`foreach (a[i]) { ... }` -> an indexed `for` over the folded size.
