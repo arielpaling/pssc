@@ -22,6 +22,7 @@ from .. import pkg_functions as pf
 from ..bit_select import bit_select
 from ..body_walker import BodyWalker, match_values
 from ..validate_calls import callee_name, is_core_call
+from ..array_literal import is_literal
 from ..progseq_model import (enum_first_item, func_kind, FuncKind, field_is_reg_group, _dt_name,
                              sub_components, SubComp, field_is_channel,
                              channel_fields, array_base_stride, scalar_offset,
@@ -1079,7 +1080,19 @@ class _BodyEmitter(BodyWalker):
         rewritten = self._assign_from_call(target, v, pad)
         if rewritten is not None:
             return rewritten
-        return [f"{pad}{self.expr(target)} = {self.value_of(self._target_type(target), v)};"]
+        tt = self._target_type(target)
+        if is_literal(v) and not all(_dt_name(x) in ("ExprConstant", "ExprList")
+                                     for x in _nodes_of(v)):
+            # Through a temporary: Verilator writes `w = '{w[1], w[0]}`
+            # element by element, so `w[0]` is overwritten before it is read,
+            # where PSS (8.1) and SV both read every element first.
+            tmp = sv_declarator(self.types.resolve(tt), "pssc_lit")
+            return [f"{pad}begin",
+                    f"{pad}  {tmp};",
+                    f"{pad}  pssc_lit = {self.value_of(tt, v)};",
+                    f"{pad}  {self.expr(target)} = pssc_lit;",
+                    f"{pad}end"]
+        return [f"{pad}{self.expr(target)} = {self.value_of(tt, v)};"]
 
     def stmt_aug_assign(self, s, ind: int) -> List[str]:
         op = _BINOP.get(s.op.name)
@@ -1241,6 +1254,9 @@ class _BodyEmitter(BodyWalker):
         cn = _dt_name(target)
         if cn == "ExprRefLocal":
             return self.local_types.get(target.name)
+        t = self.types.type_of(target)
+        if t is not None and t.kind == "array":
+            return t.dtype      # a field: an array literal needs its shape
         return None
 
     def value_of(self, dtype, e) -> str:
@@ -1255,6 +1271,13 @@ class _BodyEmitter(BodyWalker):
             dtype = self.types.resolve(dtype)
         if _dt_name(e) == "ExprStructLiteral":
             return self._struct_literal(dtype, e)
+        if is_literal(e) and _dt_name(dtype) == "DataTypeArray":
+            # `{a, b}` (8.1) as an assignment pattern, `'{a, b}`: each
+            # element an assignment-like context of the element type, and
+            # every element read before the target is written.
+            # `array_literal.shape_error` has checked that it fits.
+            return "'{" + ", ".join(self.value_of(dtype.element_type, x)
+                                    for x in e.elts) + "}"
         if (dtype is not None and _dt_name(dtype) == _DT_ENUM
                 and _dt_name(e) == "ExprConstant" and isinstance(e.value, int)):
             for nm, val in dtype.items.items():
@@ -1631,7 +1654,7 @@ def _data_fields(comp) -> List[object]:
         if _dt_name(f.datatype) in (_DT_INT, _DT_STRUCT, _DT_ENUM, _DT_CHANDLE):
             out.append(f)
         elif (_dt_name(f.datatype) == "DataTypeArray"
-              and _dt_name(f.datatype.element_type) in (
+              and _dt_name(_array_leaf(f.datatype)) in (
                   _DT_INT, _DT_STRUCT, _DT_ENUM, _DT_CHANDLE)):
             # A fixed-size array of data: an unpacked array member. It used to
             # be no member at all, so a body naming it did not compile.
@@ -1656,6 +1679,15 @@ def sv_declarator(dtype, name: str, what: str = "array") -> str:
         dims += f"[{n}]"
         dt = dt.element_type
     return f"{sv_type(dt)} {name}{dims}"
+
+
+def _nodes_of(e):
+    """*e*'s expression nodes below an array literal: its leaves' roots."""
+    if is_literal(e):
+        for x in e.elts:
+            yield from _nodes_of(x)
+    else:
+        yield e
 
 
 def _array_leaf(dtype):
@@ -1873,10 +1905,13 @@ def _field_defaults(view, members: Dict[str, str]) -> List[str]:
             lines.append(f"      {members[f.name]} = {first};")
             continue
         if (_dt_name(f.datatype) == "DataTypeArray"
-                and enum_first_item(f.datatype.element_type)):
-            first = enum_first_item(f.datatype.element_type)
-            lines.append(f"      foreach ({members[f.name]}[i]) "
-                         f"{members[f.name]}[i] = {first};")
+                and enum_first_item(_array_leaf(f.datatype))):
+            first = enum_first_item(_array_leaf(f.datatype))
+            m = members[f.name]
+            if _dt_name(f.datatype.element_type) == "DataTypeArray":
+                lines.append(f"      {m} = '{{default: {first}}};")
+            else:
+                lines.append(f"      foreach ({m}[i]) {m}[i] = {first};")
             continue
         # A struct-typed attribute carries its defaults on the STRUCT's fields,
         # not on the instance, so they have to be walked out member by member.

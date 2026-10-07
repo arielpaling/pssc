@@ -4415,7 +4415,9 @@ class AstToIrTranslator:
         for key in (qualified, parts[-1]):
             if key in ctx.const_map:
                 return ir.ExprConstant(value=ctx.const_map[key])
-        enum_val = self._resolve_enum_constant(ctx, parts[-1])
+        enum_val = self._linked_enum_value(ctx, expr)
+        if enum_val is None:
+            enum_val = self._resolve_enum_constant(ctx, parts[-1])
         if enum_val is not None:
             return ir.ExprConstant(value=enum_val)
 
@@ -4769,7 +4771,9 @@ class AstToIrTranslator:
         if len(elems) == 1 and hasattr(elems[0], 'getId') and ctx is not None:
             id_obj = elems[0].getId()
             name = id_obj.getId() if isinstance(id_obj, pss_ast.ExprId) else str(id_obj)
-            enum_val = self._resolve_enum_constant(ctx, name)
+            enum_val = self._linked_enum_value(ctx, expr)
+            if enum_val is None:
+                enum_val = self._resolve_enum_constant(ctx, name)
             if enum_val is not None:
                 return self._apply_ref_bit_slice(
                     expr, ir.ExprConstant(value=enum_val))
@@ -4854,10 +4858,42 @@ class AstToIrTranslator:
         slc = ir.ExprSlice(lower=lower_expr, upper=upper_expr, step=None, is_bit_slice=True)
         return ir.ExprSubscript(value=result, slice=slc)
 
+    def _linked_enum_value(self, ctx: AstToIrContext, expr) -> Optional[int]:
+        """The value of the enum item *expr*'s linker target names, or None.
+
+        Whose item it is comes from the linker: by name alone, a model's
+        `C` was the core library's `target_language_e::C` (0)."""
+        ref = expr.getTarget() if hasattr(expr, 'getTarget') else None
+        item = self._symbol_scope_at(ctx, ref, depth=0) if ref is not None else None
+        if not isinstance(item, pss_ast.EnumItem):
+            return None
+        # An item has no parent link; its enum is the path's next-to-last step.
+        decl = ctx.symbol_root
+        for pe in list(ref.getPathList())[:-1]:
+            if not hasattr(decl, "numChildren") \
+                    or not 0 <= pe.idx < decl.numChildren():
+                return None
+            decl = decl.getChild(pe.idx)
+        if not hasattr(decl, 'numItems') and hasattr(decl, 'getDecl'):
+            decl = decl.getDecl()           # a SymbolEnumScope's EnumDecl
+        if decl is None or not hasattr(decl, 'numItems'):
+            return None
+        next_val = 0
+        for i in range(decl.numItems()):
+            it = decl.getItem(i)
+            val_node = it.getValue()
+            if val_node is not None and hasattr(val_node, 'getValue'):
+                next_val = val_node.getValue()
+            if it is item or it.getName().getId() == item.getName().getId():
+                return next_val
+            next_val += 1
+        return None
+
     def _resolve_enum_constant(self, ctx: AstToIrContext, name: str) -> Optional[int]:
         """Check if *name* is an enum member across all registered enums.
 
-        Returns the integer value if found, or None.
+        Returns the integer value if found, or None. A fallback for a
+        reference the linker left unresolved: `_linked_enum_value` first.
         """
         for dt in ctx.type_map.values():
             if isinstance(dt, ir.DataTypeEnum) and name in dt.items:

@@ -100,7 +100,9 @@ sub-component's construct) and then `<p>_pss_ctor` (the constructor body). A
 child was constructed already, whether or not anything calls it.
 
 An array is a value (LRM 8.1): assigned whole, it is copied (C element by
-element, Python by slice and `_pss_copy`). An array parameter or result is
+element, Python by slice and `_pss_copy`). An array initializer (`{1, 2}`) is
+checked once, in the gate (`targets/array_literal.py`: the element count at
+every level), and every element is read before the target is written. An array parameter or result is
 passed by handle (20.3.2); only Python does so, and the gate refuses one
 elsewhere (`validate_calls.array_signatures`).
 
@@ -499,7 +501,8 @@ not count slots anywhere else. bc moves a struct leaf by leaf (`StructT` in a
 `_Place`) and never holds one in a register. An attribute's initial value is
 the coroutine's first block, `ScExecBlock(kind="init")`. A `static const`
 reference folds from its declaration, found through the linker
-(`_linked_static_const`), never by name alone
+(`_linked_static_const`), never by name alone, and so does an enum item
+(`_linked_enum_value`: by name, a model's `C` was the core library's)
 (`test_bc_struct_values.py`, `test_bc_attribute_paths.py`).
 
 **An activation is one object; its actions are nodes.** The scenario pass

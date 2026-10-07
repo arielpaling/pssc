@@ -35,6 +35,7 @@ from .. import comp_inherit as ci
 from ..body_walker import match_values
 
 from ..comments import LINE, append_trailing, blank_line, comment_lines, doc_block
+from ..array_literal import is_literal
 from ..progseq_model import (
     enum_first_item,
     func_kind, FuncKind, field_is_reg_group, _dt_name, channel_fields,
@@ -445,9 +446,28 @@ class _BodyEmitter(CIntSemantics):
             return getattr(fn, "returns", None) if fn is not None else None
         return None
 
+    def _literal(self, lst, dtype) -> str:
+        """`{a, b}` as a `std::array` of *dtype*: a temporary, so every
+        element is read before the target is written (`w = {w[1], w[0]}`
+        swaps). Each element is converted to the element type (8.7.2), and
+        an integer one cast, since a brace initializer refuses a narrowing
+        conversion. `array_literal.shape_error` has checked that it fits."""
+        elem = self.types.resolve(dtype.element_type)
+        parts = []
+        for e in lst.elts:
+            text = self._coerce(e, elem)
+            t = self.types.of_datatype(elem)
+            if t is not None and t.kind == "int" \
+                    and _dt_name(e) != "ExprConstant":
+                text = f"static_cast<{cpp_type(elem)}>({text})"
+            parts.append(text)
+        return f"{cpp_type(dtype)}{{{{" + ", ".join(parts) + "}}"
+
     def _coerce(self, e, dtype) -> str:
         """Render ``e`` where a value of ``dtype`` is expected: converted to
         it if it is an integer type (8.7.2), named if it is an enum."""
+        if is_literal(e) and _dt_name(dtype) == _DT_ARRAY:
+            return self._literal(e, dtype)
         if dtype is not None and _dt_name(dtype) != _DT_ENUM:
             target = self.types.of_datatype(dtype)
             if target is not None and target.kind == "int":
@@ -1016,7 +1036,8 @@ class _BodyEmitter(CIntSemantics):
                 else [])
         if _dt_name(s.annotation) == _DT_ARRAY:
             if getattr(s, "value", None) is not None:
-                return [f"{pad}{ct} {name} = {self.expr(s.value)};"] + tail
+                return [f"{pad}{ct} {name} = "
+                        f"{self._coerce(s.value, s.annotation)};"] + tail
             return [f"{pad}{ct} {name}{_array_init(s.annotation)};"] + tail
         if getattr(s, "value", None) is not None:
             return [f"{pad}{ct} {name} = "
@@ -1425,7 +1446,14 @@ def _field_defaults(comp, emitter, pad: str) -> List[str]:
     out: List[str] = []
     for f in data_members(comp):
         iv = getattr(f, "initial_value", None)
-        if iv is not None:
+        if is_literal(iv):
+            out.append(f"{pad}this->{mangle(f.name)} = "
+                       f"{emitter._literal(iv, f.datatype)};")
+        elif iv is not None and _dt_name(f.datatype) == _DT_ENUM:
+            # An item reaches the IR as its value; C++ names it.
+            out.append(f"{pad}this->{mangle(f.name)} = "
+                       f"{emitter._coerce(iv, f.datatype)};")
+        elif iv is not None:
             out.append(f"{pad}this->{mangle(f.name)} = {emitter.expr(iv)};")
     return out
 

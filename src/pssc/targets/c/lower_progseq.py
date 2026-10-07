@@ -27,6 +27,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Set
 
 import zuspec.ir.core as ir
 
+from ..array_literal import is_literal
 from ..progseq_model import (
     func_kind, FuncKind, field_is_reg_group, _dt_name, CompKind,
     sub_components, channel_fields, array_base_stride, scalar_offset,
@@ -564,6 +565,10 @@ def _field_defaults(comp, target: str = HANDLE) -> List[str]:
     out: List[str] = []
     for f in data_members(comp):
         iv = getattr(f, "initial_value", None)
+        if is_literal(iv):
+            out += _literal_assigns(f"{target}->{mangle(f.name)}", iv,
+                                    "    ")
+            continue
         if iv is not None:
             out.append(f"    {target}->{mangle(f.name)} = {_const_expr(iv)};")
             continue
@@ -572,6 +577,18 @@ def _field_defaults(comp, target: str = HANDLE) -> List[str]:
         # member -- through nested structs and arrays of them alike.
         out += _default_assigns(f"{target}->{mangle(f.name)}", f.datatype,
                                 "    ")
+    return out
+
+
+def _literal_assigns(lv: str, lst, pad: str) -> List[str]:
+    """A field's array initializer, one assignment per element: its elements
+    are constants, and `_init` writes into storage the caller owns."""
+    out: List[str] = []
+    for i, e in enumerate(lst.elts):
+        if is_literal(e):
+            out += _literal_assigns(f"{lv}[{i}]", e, pad)
+        else:
+            out.append(f"{pad}{lv}[{i}] = {_const_expr(e)};")
     return out
 
 
@@ -1113,6 +1130,18 @@ class CIntSemantics(IntSemantics):
         s = self.types.type_of(e)
         if target is None or target.kind != "int" or not is_integral(s):
             return self.expr(e)
+        if _dt_name(e) == "ExprConstant" and isinstance(e.value, int) \
+                and not isinstance(e.value, bool):
+            # A constant the target cannot hold is folded here: C would
+            # wrap it too, and warn (`-Woverflow`), and C++ refuses one in
+            # braces. `bit[8] x = 300;` is 44 (8.7.2).
+            bits, v = target.width, e.value
+            folded = v & ((1 << bits) - 1)
+            if target.signed and folded >> (bits - 1):
+                folded -= 1 << bits
+            if folded != v:
+                e = dc.replace(e, value=folded, width=0, signed=None)
+                s = self.types.type_of(e)
         if _c_store_exact(target.as_int()):
             return self._int_root(e, assign_source_type(target, s),
                                   ring=True).text
@@ -1802,6 +1831,11 @@ class _BodyEmitter(CIntSemantics, CallDispatch, BodyWalker):
                     ] + tail
         if _dt_name(s.annotation) == _DT_ARRAY:
             decl = c_declarator(s.annotation, name, "local array")
+            if is_literal(getattr(s, "value", None)):
+                # C99 6.7.8: an automatic array's initializer list may hold
+                # any expressions, each evaluated once.
+                return ([f"{pad}{decl} = "
+                         f"{self._literal(s.value, s.annotation)};"] + tail)
             if getattr(s, "value", None) is not None:
                 return ([f"{pad}{decl};"]
                         + self._array_assign(name, s.value, s.annotation, pad)
@@ -1850,7 +1884,24 @@ class _BodyEmitter(CIntSemantics, CallDispatch, BodyWalker):
 
     def _array_assign(self, dst: str, value, dtype, pad: str,
                       target=None) -> List[str]:
-        """An array assigned whole (`v = w;`), element by element."""
+        """An array assigned whole (`v = w;`), element by element.
+
+        A literal is first a temporary array, so every element is read
+        before any is written: `w = {w[1], w[0]}` swaps."""
+        if is_literal(value):
+            if target is not None and _has_call(target):
+                raise ValueError(
+                    f"in '{getattr(self.fn, 'name', '?')}': an array "
+                    "assigned from `{...}` into an expression with a call is "
+                    "not supported in C: it is copied element by element, "
+                    "and the call would run once per element.")
+            tmp = "_pssc_lit"
+            inner = pad + "    "
+            return ([f"{pad}{{",
+                     f"{inner}{c_declarator(dtype, tmp, 'array')} = "
+                     f"{self._literal(value, dtype)};"]
+                    + _array_copy(dst, tmp, dtype, inner)
+                    + [f"{pad}}}"])
         if _has_call(value) or (target is not None and _has_call(target)):
             raise ValueError(
                 f"in '{getattr(self.fn, 'name', '?')}': an array assigned "
@@ -1862,6 +1913,18 @@ class _BodyEmitter(CIntSemantics, CallDispatch, BodyWalker):
                 f"cannot assign array '{dst}': its size is not known at "
                 "generation time.")
         return _array_copy(dst, self.expr(value), dtype, pad)
+
+    def _literal(self, lst, dtype) -> str:
+        """`{a, b}` as a C initializer list of *dtype*, each element converted
+        to the element type (8.7.2); `array_literal.shape_error` has checked
+        that it fits."""
+        elem = self.types.resolve(dtype.element_type)
+        if _dt_name(elem) == _DT_ARRAY:
+            parts = [self._literal(e, elem) for e in lst.elts]
+        else:
+            et = self.types.of_datatype(elem)
+            parts = [self.convert_to(e, et) for e in lst.elts]
+        return "{" + ", ".join(parts) + "}"
 
     def stmt_aug_assign(self, s, ind: int) -> List[str]:
         """`x op= e` is `x = x op e` (8.3), converted back to x's type.

@@ -52,6 +52,7 @@ from ..call_legality import Ctx
 from ..validate_calls import callee_name, is_super_call
 from ..comments import HASH
 from .. import executors as xtr
+from ..array_literal import is_literal
 from ..progseq_model import (FuncKind, INIT_EXEC_KINDS, _dt_name,
                              array_base_stride, channel_fields, exec_kind,
                              func_kind, resolve_ref, struct_base,
@@ -1373,6 +1374,9 @@ class _BodyEmitter(IntSemantics, CallDispatch, BodyWalker):
             return [f"{pad}{name} = {self._struct_value(value, target)}"]
         if value is not None and target is not None \
                 and target.kind == "array":
+            if is_literal(value):
+                return [f"{pad}{name} = "
+                        f"{self.array_literal(value, target.dtype)}"]
             return [f"{pad}{name} = "
                     f"{self._array_copy(self.expr(value), target.dtype)}"]
         with self._no_hoist_as_is(value, target):
@@ -1457,6 +1461,22 @@ class _BodyEmitter(IntSemantics, CallDispatch, BodyWalker):
         return f"list({text})" if inner == e else \
             f"[{inner} for {e} in {text}]"
 
+    def array_literal(self, lst, dtype) -> str:
+        """`{a, b}` as a new list of *dtype*: each element assigned to the
+        element type (8.7.2), a struct copied, a nested `{...}` a row.
+        `array_literal.shape_error` has checked that it fits."""
+        elem = self.types.resolve(dtype.element_type)
+        et = self.types.of_datatype(elem)
+        parts = []
+        for e in lst.elts:
+            if _dt_name(elem) == _DT_ARRAY:
+                parts.append(self.array_literal(e, elem))
+            elif self._struct_dtype(et) is not None:
+                parts.append(self._struct_value(e, et))
+            else:
+                parts.append(self.convert_to(e, et))
+        return "[" + ", ".join(parts) + "]"
+
     def _value_copy(self, text: str, dtype, depth: int) -> str:
         cn = _dt_name(dtype)
         if cn == _DT_ARRAY:
@@ -1477,6 +1497,9 @@ class _BodyEmitter(IntSemantics, CallDispatch, BodyWalker):
             # In place, as a struct is: an array parameter is the caller's
             # (20.3.2). A slice assignment copies the list; its elements are
             # copied when they are values of their own.
+            if is_literal(s.value):
+                return [f"{pad}{self.expr(tgt)}[:] = "
+                        f"{self.array_literal(s.value, target.dtype)}"]
             value = self.expr(s.value)
             elem = self.types.resolve(target.dtype.element_type)
             if self._value_copy("_e0", elem, 1) != "_e0":

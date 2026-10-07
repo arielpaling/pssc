@@ -892,19 +892,56 @@ component pss_top {""" + _ONE + """
                     Refused([r"pss_top::sum: an array parameter 'v'"]))),
 
     # --- Array initializers ------------------------------------------------------
-    # Not rendered by any target yet. Each failed with an internal error
-    # naming no line of the model; it is refused, naming the field and the
-    # function.
-    "an array initializer": Case("""
+    # `{...}` as a field's initializer, a local's and an assigned value, nested
+    # for an array of arrays. Each element is assigned to its element type
+    # (8.7.2: 300 is 0x2c in a `bit[8]`), and every element is read before
+    # any is written, so `w = {w[1], w[0]}` swaps. No target rendered one; the
+    # case was refused before.
+    "array initializers": Case("""
+enum m_e { A, B, C }
 component pss_top {""" + _ONE + """
   array<bit[32], 3> v = {1, 2, 3};
+  array<array<bit[8], 2>, 2> g = {{1, 2}, {3, 4}};
+  array<m_e, 2> e = {C, A};
   target function void run() {
-    array<bit[8], 2> w;
-    w = {4, 5};
+    array<bit[8], 2> w = {v[2], 300};
     a.STS.write_val(v[0] + w[1]);
+    w = {w[1], w[0]};
+    a.STS.write_val(w[0] * 16 + w[1]);
+    g = {{w[1], 7}, {g[0][0], g[1][1]}};
+    a.STS.write_val(g[0][0] * 1000 + g[0][1] * 100 + g[1][0] * 10 + g[1][1]);
+    e = {e[0], B};
+    if (e[0] == C && e[1] == B) { a.STS.write_val(1); }
   }
-}""", Refused([r"pss_top\.v: an array initializer",
-               r"pss_top::run: an array initializer"])),
+}""", ["write 32 0x1004 0x2d", "write 32 0x1004 0x2c3",
+       "write 32 0x1004 0xe82", "write 32 0x1004 0x1"]),
+
+    # An enum item is the one the linker found. By name alone, `C` and `SV`
+    # here were the core library's `target_language_e::C` and `::SV` (0, 2).
+    "enum items named as the core library's": Case("""
+enum lang_e { SV, CPP = 4, C }
+component pss_top {""" + _ONE + """
+  lang_e f = C;
+  target function void run() {
+    lang_e x = SV;
+    a.STS.write_val((bit[32])f * 16 + (bit[32])x);
+    if (x == SV && f == C) { a.STS.write_val(1); }
+  }
+}""", ["write 32 0x1004 0x50", "write 32 0x1004 0x1"]),
+
+    # An initializer has the array's element count (8.1), at every level.
+    "an array initializer of the wrong size": Case("""
+component pss_top {""" + _ONE + """
+  array<bit[32], 3> v = {1, 2};
+  target function void run() {
+    array<array<bit[8], 2>, 2> w;
+    w = {{1, 2}, {3, 4, 5}};
+    a.STS.write_val(v[0] + w[1][0]);
+  }
+}""", Refused([r"pss_top\.v: an array initializer with 2 element\(s\), "
+               r"for an array of 3",
+               r"pss_top::run: an array initializer with 3 element\(s\), "
+               r"for an array of 2"])),
 
     # --- A register value on the API -------------------------------------------
     # A layout is implementation until the API names it: here an operation

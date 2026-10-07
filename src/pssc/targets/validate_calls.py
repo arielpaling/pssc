@@ -395,44 +395,6 @@ def validate_calls(root, ctx, target: str, *, report_only: bool = False,
     return msgs
 
 
-def array_literals(comps) -> List[str]:
-    """Where an array initializer (`{1, 2, 3}`, a non-empty `ir.ExprList`)
-    gives a field or a variable its value.
-
-    No op-model target renders one yet, and each used to fail with an
-    internal error naming no line of the model. So it is refused here, with
-    the field or function it is in. `{}` (a type's default) and a list passed
-    to a call are other constructs, left to the emitters."""
-    out: List[str] = []
-
-    def is_list(e) -> bool:
-        return _dt_name(e) == "ExprList" and bool(getattr(e, "elts", None))
-
-    def assigned_lists(node) -> bool:
-        if isinstance(node, (list, tuple)):
-            return any(assigned_lists(n) for n in node)
-        if not dc.is_dataclass(node) or isinstance(node, type):
-            return False
-        if (_dt_name(node) in ("StmtAnnAssign", "StmtAssign")
-                and is_list(getattr(node, "value", None))):
-            return True
-        return any(assigned_lists(getattr(node, f.name, None))
-                   for f in dc.fields(node)
-                   if f.name in ("body", "orelse", "cases", "stmts"))
-
-    for comp in comps:
-        cname = _name_of(comp)
-        for f in getattr(comp, "fields", None) or []:
-            if is_list(getattr(f, "initial_value", None)):
-                out.append(f"{cname}.{f.name}: an array initializer is not "
-                           f"supported yet")
-        for fn in getattr(comp, "functions", None) or []:
-            if assigned_lists(getattr(fn, "body", None)):
-                out.append(f"{cname}::{fn.name}: an array initializer is not "
-                           f"supported yet")
-    return out
-
-
 def array_signatures(comps) -> List[str]:
     """Each function with an array parameter or result, as
     ``"<comp>::<fn>: an array parameter 'v'"`` / ``"...: an array result"``.
@@ -475,11 +437,13 @@ def gate(root, ctx, target: str, language: str, ctor_names=None,
     P2 of docs/design/generator-style-extensions-plan.md.
     """
     from ..driver import CompileError
-    lists = array_literals(_with_extra(_components(root), extra_components))
+    from .array_literal import literal_errors
+    lists = literal_errors(_with_extra(_components(root), extra_components),
+                           ctx)
     if lists:
         raise CompileError(
-            f"{len(lists)} array initializer(s) cannot be lowered to "
-            f"{language} yet", lists)
+            f"{len(lists)} array initializer(s) do not fit their array",
+            lists)
     if not array_params:
         sigs = array_signatures(_with_extra(_components(root),
                                             extra_components))

@@ -1112,6 +1112,8 @@ class PyOpModelBackend(object):
         """One initializer, converted to *dtype*."""
         if _dt_name(e) == "ExprRefUnresolved":
             return mangle(e.name)      # a package-scope constant
+        if _dt_name(e) == "ExprList" and e.elts:
+            return be.array_literal(e, be.types.resolve(dtype))
         return be.convert_to(e, be.types.of_datatype(dtype))
 
     @staticmethod

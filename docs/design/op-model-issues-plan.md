@@ -1,6 +1,6 @@
 # Op-model findings from a second field model: triage and plan
 
-Status: W1-W14 **done** (2026-10-07; W10 only as a refusal), W15 planned; rulings in section 4. Source: a list of 14 findings (`issues`, untracked
+Status: W1-W15 **done** (2026-10-07; W10's refusal replaced by W15); rulings in section 4. Source: a list of 14 findings (`issues`, untracked
 in the repo root), reported while projecting another field model through the
 op-model targets. Each finding came with the workaround the model had used.
 
@@ -165,9 +165,8 @@ values: an enum's first item, a bare local". C goldens: locals gain `= 0` and
 with W9: every target fails with an internal error (`ExprList` has no
 rendering). DONE, the minimum: the gate refuses a non-empty one that
 initializes a field or is assigned to a variable, naming the field or
-function (`validate_calls.array_literals`). `{}` and a list passed to a call
-are left to the emitters. Rendering one is not scheduled. Matrix case: "an
-array initializer".
+function. `{}` and a list passed to a call are left to the emitters.
+Superseded by W15, which renders one.
 
 **W12. Locals named as C keywords (C, C++).** Found after W8: C and C++
 renamed a field or parameter spelled as a keyword (`char`, `long`, `_self`)
@@ -207,9 +206,35 @@ writes. The gate refuses it on those three
 matrix case "an array parameter". Lowering it (a pointer in C, `ref` in SV,
 a reference in C++) is not planned yet.
 
-**W15. Array initializers.** Planned, after W14: `{1, 2, 3}` as a field
-initializer, a local's initializer and an assigned value, with the element
-count checked; then W10's refusal goes.
+**W15. Array initializers.** Done. `{1, 2, 3}` is a field's initializer, a
+local's or an assigned value on every target, nested for an array of arrays.
+The gate checks the shape once for all four (`targets/array_literal.py`): the
+element count at every level (LRM 8.1), and a target that is an array; a
+literal that does not fit is refused, naming the field or function. Each
+element is an assignment-like context of the element type (8.7.2), and every
+element is read before the target is written, so `w = {w[1], w[0]}` swaps:
+C declares a local with the list and assigns through a temporary array;
+C++ builds a `std::array` temporary, casting an integer element, since a
+brace initializer refuses a narrowing conversion; Python builds a new list;
+SV writes an assignment pattern, through a temporary when an element is not
+a constant, because Verilator writes `w = '{w[1], w[0]}` element by
+element. Matrix cases: "array initializers", "an array initializer of the
+wrong size".
+
+Found along the way:
+
+* ast2ir resolved an enum item by NAME across every enum in the model, so a
+  model's `C` or `SV` was the core library's `target_language_e::C` (0) or
+  `::SV` (2), silently and on every target. It now takes the item the linker
+  resolved (`_linked_enum_value`); the by-name lookup remains only for a
+  reference the linker left unresolved. Matrix case: "enum items named as
+  the core library's".
+* C and C++ wrote a constant too wide for its target as it stood (`300` into
+  a `uint8_t`): C warned (`-Woverflow`, an error under `-Werror`) and a C++
+  brace initializer refused it. `CIntSemantics.convert_to` folds it (44).
+* C++ assigned an enum field's initializer as an integer (`this->f = 6;`),
+  which does not compile; it names the item.
+* SV did not declare an array-of-arrays field.
 
 ## 3. Carried over from the earlier list
 
