@@ -814,6 +814,21 @@ component pss_top {""" + _ONE + """
   }
 }""", ["write 32 0x1004 0xf"]),
 
+    # --- Array initializers ------------------------------------------------------
+    # Not rendered by any target yet. Each failed with an internal error
+    # naming no line of the model; it is refused, naming the field and the
+    # function.
+    "an array initializer": Case("""
+component pss_top {""" + _ONE + """
+  array<bit[32], 3> v = {1, 2, 3};
+  target function void run() {
+    array<bit[8], 2> w;
+    w = {4, 5};
+    a.STS.write_val(v[0] + w[1]);
+  }
+}""", Refused([r"pss_top\.v: an array initializer",
+               r"pss_top::run: an array initializer"])),
+
     # --- A register value on the API -------------------------------------------
     # A layout is implementation until the API names it: here an operation
     # returns one, another takes one, and the root holds one. C kept every

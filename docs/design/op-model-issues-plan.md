@@ -161,6 +161,14 @@ differ; a C scalar local is declared with its default. Matrix case: "default
 values: an enum's first item, a bare local". C goldens: locals gain `= 0` and
 `= WB_DMA_DONE`.
 
+**W10. An array initializer (`array<bit[32], 3> v = {1, 2, 3};`).** Found
+with W9: every target fails with an internal error (`ExprList` has no
+rendering). DONE, the minimum: the gate refuses a non-empty one that
+initializes a field or is assigned to a variable, naming the field or
+function (`validate_calls.array_literals`). `{}` and a list passed to a call
+are left to the emitters. Rendering one is not scheduled. Matrix case: "an
+array initializer".
+
 **W12. Locals named as C keywords (C, C++).** Found after W8: C and C++
 renamed a field or parameter spelled as a keyword (`char`, `long`, `_self`)
 but not a local, so `int char = 3;` did not compile. DONE: a local is renamed
