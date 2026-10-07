@@ -1,6 +1,6 @@
 # Op-model findings from a second field model: triage and plan
 
-Status: **in progress** (2026-10-07); rulings in section 4. Source: a list of 14 findings (`issues`, untracked
+Status: **done** (2026-10-07; W10 only as a refusal); rulings in section 4. Source: a list of 14 findings (`issues`, untracked
 in the repo root), reported while projecting another field model through the
 op-model targets. Each finding came with the workaround the model had used.
 
