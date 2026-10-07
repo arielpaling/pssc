@@ -446,6 +446,13 @@ def _operations(comp, ctor_names=None) -> List[object]:
             if func_kind(fn, ctor_names) == FuncKind.EXPORT_OP]
 
 
+def _solve_operations(comp, ctor_names=None) -> List[object]:
+    """The component's solve functions other than its constructor: private
+    operations, called from the constructor and from each other only."""
+    return [fn for fn in comp.functions
+            if func_kind(fn, ctor_names) == FuncKind.EXPORT_SOLVE]
+
+
 def _ctor(comp, ctor_names=None):
     for fn in comp.functions:
         if func_kind(fn, ctor_names) == FuncKind.CONSTRUCTOR:
@@ -1586,11 +1593,12 @@ class _BodyEmitter(CIntSemantics, CallDispatch, BodyWalker):
 
     def call_names(self):
         """The model's own names, from the pass that vouched for these calls."""
-        from ..validate_calls import model_names
+        from ..validate_calls import model_names, solve_ops
 
         _, ops, ctors = model_names(self.comp, self.ctor_names)
         return dict(model_ops=ops, imports=frozenset(self.imports),
-                    subcomps=ctors)
+                    subcomps=ctors,
+                    solve_ops=solve_ops(self.comp, self.ctor_names))
 
     def call_reg(self, call) -> Optional[str]:
         return self._reg_call(call)
@@ -2401,6 +2409,31 @@ def lower_operation(fn, ctx: OpCtx) -> List[str]:
     return lines
 
 
+def _solve_impl(comp, prefix, prefixes, emitter_cls, qual, be_kw,
+                style) -> List[str]:
+    """The component's solve functions (`_solve_operations`), file-local.
+
+    Not on the API: PSS lets only solve context call one (22.2.3), and the
+    platform calls the generated code in target context. So each is `static`,
+    declared first -- they may call each other, and the constructor below calls
+    them -- and its body is rendered as a constructor's is, in solve context.
+    """
+    fns = _solve_operations(comp, be_kw.get("ctor_names"))
+    if not fns:
+        return []
+    helper = "static inline " if qual else "static "
+    ctx = OpCtx(comp=comp, prefix=prefix, qual=helper,
+                type_name=prefixes.type_name(comp),
+                emitter_cls=ctor_emitter_cls(emitter_cls), be_kw=be_kw)
+    lines = [f"{_op_signature(fn, prefix, ctx.type_name, helper, style)};"
+             for fn in fns]
+    for fn in fns:
+        lines.append("")
+        lines += lower_operation(fn, ctx)
+    lines.append("")
+    return lines
+
+
 def lower_impl(model, prefixes, *, link_style: str = "vtable",
                static_inline: bool = False, reg_style: str = "bitfields",
                yield_mode: str = "none", match_default: str = "message",
@@ -2426,6 +2459,11 @@ def lower_impl(model, prefixes, *, link_style: str = "vtable",
         comp = node.dtype
         prefix = prefixes[comp]
         lines.append(f"/* --- {getattr(comp, 'name', '?')} --- */")
+        lines += _solve_impl(comp, prefix, prefixes, emitter_cls, qual,
+                             dict(reg_style=reg_style, prefixes=prefixes,
+                                  link_style=link_style,
+                                  ctor_names=ctor_names, **be_kw),
+                             style)
         lines += _lifecycle_impl(node, prefixes, link_style, qual, reg_style,
                                  is_root=model.is_root(comp),
                                  lifecycle=lifecycle, ctor_names=ctor_names,

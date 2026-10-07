@@ -540,6 +540,9 @@ class PyOpModelBackend(object):
         for fn in model.operations(comp):
             lines.append("")
             lines += self.emit_operation(fn, comp, model)
+        for fn in model.solve_functions(comp):
+            lines.append("")
+            lines += self.emit_solve_function(fn, comp, model)
         for entry in model.entries_of(comp):
             lines.append("")
             lines += self.emit_entry(entry, comp, model)
@@ -758,6 +761,9 @@ class PyOpModelBackend(object):
             if model.func_kind(fn) is FuncKind.EXPORT_OP:
                 lines.append("")
                 lines += self.emit_operation(fn, comp, model)
+            elif model.func_kind(fn) is FuncKind.EXPORT_SOLVE:
+                lines.append("")
+                lines += self.emit_solve_function(fn, comp, model)
         for entry in model.entries_of(comp):
             lines.append("")
             lines += self.emit_entry(entry, comp, model)
@@ -958,6 +964,19 @@ class PyOpModelBackend(object):
                  f"{mangle(fn.name)}({', '.join(params)}):"]
         lines += reg._docstring(getattr(fn, "doc", None), "        ")
         be = self._emitter(self.body_emitter_cls, fn, comp, model)
+        lines += be.emit(fn.body, 2)
+        return lines
+
+    def emit_solve_function(self, fn, comp, model) -> List[str]:
+        """A solve function other than the constructor, as a private method.
+
+        Not an operation: only solve context -- the constructor, another solve
+        function -- may call one (22.2.3). So it is never a coroutine, and
+        its body is rendered as the constructor's is."""
+        params = ["self"] + [mangle(a.arg) for a in fn.args.args]
+        lines = [f"    def {lp.solve_method(fn.name)}({', '.join(params)}):"]
+        lines += reg._docstring(getattr(fn, "doc", None), "        ")
+        be = self._emitter(self.ctor_emitter_cls, fn, comp, model)
         lines += be.emit(fn.body, 2)
         return lines
 

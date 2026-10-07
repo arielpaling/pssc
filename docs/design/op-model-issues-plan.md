@@ -92,7 +92,18 @@ SV unpacked arrays of the element type, initialized like scalars, and give
 `foreach` over one the same rendering Python and C use. Test: the existing
 matrix construct (`keys[1] = 5; raw[2] = 6;`), and a `foreach` over a field.
 
-**W6. Calling a solve function other than the constructor.** Ruled (Q2): every `solve function` of a component is
+**W6. Calling a solve function other than the constructor.** DONE. The gate
+counts a solve function as an operation callable from solve context only
+(`validate_calls.solve_ops`; `classify(..., solve_ops=)`). C renders each as a
+`static` function declared before the lifecycle (`_solve_impl`), Python as a
+plain method `_pss_solve_<name>` (`_pss_` alone would meet `_pss_bind` and
+`_pss_init`), C++ as a member not on `<cls>_if`; SV already rendered them as
+class functions, PSS-named per the SV naming ruling, and its constructor
+lowering (`lower_init`) now calls one. Bodies render in solve context, as a
+constructor's. Matrix cases: "solve functions the constructor calls", "a
+target function calling a solve function" (refused). This also made C's
+`super.initialize(...)` work: the flattened view calls a private copy of the
+base's constructor, which is such a function. Planned: every `solve function` of a component is
 lowered as a private operation of that component, on every target, so the
 constructor and other solve functions can call it. A `target` function calling
 one stays refused, since PSS forbids that call. Under C the operation is
@@ -159,8 +170,8 @@ rendering). Not scheduled; the minimum is a `CompileError`.
 These remain from `op-model-field-defects-plan.md` §0 and are not in this
 report:
 
-* C does not lower `super.initialize(...)` in a constructor (strict xfail in
-  `test_op_model_inherit_native.py`).
+* ~~C does not lower `super.initialize(...)` in a constructor~~ -- fixed by
+  W6; `test_op_model_inherit_native.py::test_c` has no xfail left.
 * `get_offset_of_instance` is classified by name alone on non-register
   components (corpus `types.string.match.001`).
 * Python: a sub-component with a constructor is `None` until that constructor
@@ -177,4 +188,5 @@ report:
 ## 5. Proposed commits
 
 One per item, each with its matrix cases: W1 (refusal) -> W2 -> W3 -> W8 ->
-W5 -> W9 -> W11 -> W4 -> W7 -> W6 -> W10. Then C `super.initialize`.
+W5 -> W9 -> W11 -> W4 -> W7 -> W6 (which also fixed C `super.initialize`)
+-> W10.

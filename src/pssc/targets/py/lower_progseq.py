@@ -157,6 +157,15 @@ def _nodes(node):
         yield from _nodes(getattr(node, f.name, None))
 
 
+def solve_method(name: str) -> str:
+    """The method a solve function other than the constructor becomes.
+
+    Private: only solve context may call one (22.2.3), and the platform calls
+    the module in target context. `_pss_solve_` rather than `_pss_`, which
+    the generated construction methods use (`_pss_bind`, `_pss_init`)."""
+    return f"_pss_solve_{name}"
+
+
 def _assigns_local(body, name: str) -> bool:
     """Whether *body* assigns the local *name*."""
     for n in _nodes(body):
@@ -816,11 +825,12 @@ class _BodyEmitter(IntSemantics, CallDispatch, BodyWalker):
     # -- calls, one hook per Disposition -------------------------------------
 
     def call_names(self):
-        from ..validate_calls import model_names
+        from ..validate_calls import model_names, solve_ops
 
         _, ops, ctors = model_names(self.comp, self.ctor_names)
         return dict(model_ops=ops, imports=frozenset(self.imports),
-                    subcomps=ctors, pkg_funcs=self._pkg_contexts())
+                    subcomps=ctors, pkg_funcs=self._pkg_contexts(),
+                    solve_ops=solve_ops(self.comp, self.ctor_names))
 
     def _pkg_functions(self):
         """``{name: function}`` for the package functions this model carries,
@@ -1281,7 +1291,8 @@ class _BodyEmitter(IntSemantics, CallDispatch, BodyWalker):
             dtype = sub.dtype
         op = next((f for f in getattr(dtype, "functions", None) or []
                    if f.name == func.attr), None)
-        if op is None or func_kind(op, self.ctor_names) is not FuncKind.EXPORT_OP:
+        if op is None or func_kind(op, self.ctor_names) not in (
+                FuncKind.EXPORT_OP, FuncKind.EXPORT_SOLVE):
             raise ValueError(
                 f"'{'.'.join(n for n, _ in chain)}.{func.attr}()' is not an "
                 f"operation of '{getattr(dtype, 'name', '?')}'")
@@ -1295,6 +1306,8 @@ class _BodyEmitter(IntSemantics, CallDispatch, BodyWalker):
         if sub is not None:
             recv, op = sub
             args = self.call_args(call.args, op)
+            if func_kind(op, self.ctor_names) is FuncKind.EXPORT_SOLVE:
+                return f"{recv}.{solve_method(op.name)}(" + ", ".join(args) + ")"
             return self._awaited(
                 f"{recv}.{mangle(func.attr)}(" + ", ".join(args) + ")", call)
         name = None
@@ -1307,6 +1320,11 @@ class _BodyEmitter(IntSemantics, CallDispatch, BodyWalker):
                   next((f for f in getattr(self.comp, "functions", None) or ()
                         if f.name == name), None))
         args = self.call_args(call.args, callee)
+        if (callee is not None and name in self.model_ops
+                and func_kind(callee, self.ctor_names) is FuncKind.EXPORT_SOLVE):
+            # A solve function: a private method, never a coroutine -- solve
+            # context cannot consume time (`solve_method`).
+            return f"self.{solve_method(name)}(" + ", ".join(args) + ")"
         if name is not None and name in self.model_ops:
             # Another operation of this component is a PSS target function and
             # is generated `async def` in this form, so calling it is an await.

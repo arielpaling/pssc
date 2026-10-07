@@ -174,6 +174,25 @@ def cpp_type(dtype) -> str:
 # (P6a.T5): which solve function is the constructor is the compile's answer,
 # and an emitter that asks the process gets whichever compile set it last.
 
+def _solve_functions(comp, ctor_names=None) -> List[object]:
+    """Solve functions other than the constructor: members of the class, and
+    not of its interface -- only solve context may call one (22.2.3)."""
+    return [fn for fn in comp.functions
+            if func_kind(fn, ctor_names) == FuncKind.EXPORT_SOLVE]
+
+
+def _solve_member(fn, be, cls) -> List[str]:
+    """One solve function as a member function, rendered as the constructor's
+    body is. Not virtual and not on `<cls>_if`."""
+    lines = [""] + doc_block(getattr(fn, "doc", None), "    ", LINE)
+    lines.append(f"    // A solve function: the constructor's to call, not on "
+                 f"{cls}_if.")
+    lines.append(f"    {_ret(fn)} {mangle(fn.name)}({_params(fn)}) {{")
+    lines += be.stmts(fn.body, 2)
+    lines.append("    }")
+    return lines
+
+
 def _operations(comp, ctor_names=None) -> List[object]:
     return [fn for fn in comp.functions
             if func_kind(fn, ctor_names) == FuncKind.EXPORT_OP]
@@ -1519,6 +1538,9 @@ def emit_component(node, names, ns: str, *, imports=None, is_root: bool,
         lines.append(f"    {_ret(fn)} {mangle(fn.name)}({_params(fn)}) override {{")
         lines += be.stmts(fn.body, 2)
         lines.append("    }")
+    for fn in _solve_functions(comp, ctor_names):
+        lines += _solve_member(fn, _CtorEmitter(fn, comp, names, cls=cls,
+                                                **be_kw), cls)
 
     # -- sub-component access ------------------------------------------------
     for sub in subs:
@@ -1657,6 +1679,11 @@ def emit_hier_component(node, names, ns: str, model, *, imports=None,
         lines.append(f"    {_ret(fn)} {mangle(fn.name)}({_params(fn)}) override {{")
         lines += be.stmts(fn.body, 2)
         lines.append("    }")
+    for fn in own_fns:
+        if func_kind(fn, ctor_names) is FuncKind.EXPORT_SOLVE:
+            lines += _solve_member(
+                fn, _native(_CtorEmitter(fn, comp, names, cls=cls, **be_kw),
+                            base, names), cls)
 
     # -- sub-component access: its own ---------------------------------------
     for sub in subs:

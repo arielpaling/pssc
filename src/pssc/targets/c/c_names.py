@@ -52,7 +52,8 @@ def declared_names(backend, model, s) -> List[Tuple[str, str]]:
     from ..reg_layout import reg_maps_for
     from .lower_api_types import c_member_type
     from ..progseq_model import sub_components
-    from .lower_progseq import _ctor, _operations, mangle, regular_nodes
+    from .lower_progseq import (_ctor, _operations, _solve_operations, mangle,
+                                 regular_nodes)
     from .lower_reg_model import accessor_kinds, c_struct_name, map_type_name
 
     style, prefixes = backend.style, backend.prefixes
@@ -95,6 +96,9 @@ def declared_names(backend, model, s) -> List[Tuple[str, str]]:
         for fn in _operations(comp, model.ctor_names):
             out.append((style.symbol(p, mangle(fn.name)),
                         f"operation '{who}.{fn.name}'"))
+        for fn in _solve_operations(comp, model.ctor_names):
+            out.append((style.symbol(p, mangle(fn.name)),
+                        f"solve function '{who}.{fn.name}'"))
         for sub in sub_components(comp):
             out.append((style.symbol(p, mangle(sub.name)),
                         f"the accessor of sub-component '{who}.{sub.name}'"))

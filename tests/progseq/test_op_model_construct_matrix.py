@@ -767,6 +767,39 @@ component pss_top {""" + _ONE + """
        "write 32 0x1004 0xa", "write 32 0x1004 0xc",
        "write 32 0x1004 0x6"]),
 
+    # --- solve functions other than the constructor (LRM 22.2.3) ----------------
+    # Private operations: the constructor calls them, they call each other, a
+    # parent's constructor calls a child's. x = 7, then bump: 8; k = 3 + 1.
+    # Every target refused the call ("no function named 'setup'").
+    "solve functions the constructor calls": Case("""
+component sub_c {
+  int k = 1;
+  solve function void prep(int v) { k = v + k; }
+  function int get() { return k; }
+}
+component pss_top {
+  ga_c a;
+  int x = 0;
+  sub_c s;
+  solve function void setup(int v) { x = v; bump(); }
+  solve function void bump() { x = x + 1; }
+  solve function void initialize(addr_handle_t base) {
+    a.set_handle(base);
+    setup(7);
+    s.prep(3);
+  }
+  target function void run() { a.STS.write_val(x); a.STS.write_val(s.get()); }
+}""", ["write 32 0x1004 0x8", "write 32 0x1004 0x4"]),
+
+    # Target context may not call one: the platform runs `run`, and a solve
+    # function exists only while the tree is built.
+    "a target function calling a solve function": Case("""
+component pss_top {""" + _ONE + """
+  int x = 0;
+  solve function void setup(int v) { x = v; }
+  target function void run() { setup(1); a.STS.write_val(x); }
+}""", Refused([r"'setup' is a solve function", r"target context"])),
+
     # --- A register value on the API -------------------------------------------
     # A layout is implementation until the API names it: here an operation
     # returns one, another takes one, and the root holds one. C kept every

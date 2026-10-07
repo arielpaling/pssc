@@ -436,7 +436,8 @@ def classify(name: str, *, context: Ctx, target: str,
              imports: FrozenSet[str] = frozenset(),
              subcomps: FrozenSet[str] = frozenset(),
              pkg_funcs: Optional[Dict[str, FrozenSet[Ctx]]] = None,
-             import_contexts: Optional[Dict[str, FrozenSet[Ctx]]] = None
+             import_contexts: Optional[Dict[str, FrozenSet[Ctx]]] = None,
+             solve_ops: FrozenSet[str] = frozenset()
              ) -> Result:
     """Classify a call by NAME, in ``context``, for ``target``.
 
@@ -450,7 +451,8 @@ def classify(name: str, *, context: Ctx, target: str,
 
     A model operation is a `target function`, so a call to one from a solve
     context -- a constructor, an `exec init_down` -- is WRONG_CONTEXT like any
-    other target-only call.
+    other target-only call. The ones in ``solve_ops`` are `solve` functions,
+    and the reverse holds: only a solve context may call one.
 
     ``pkg_funcs`` is ``{name: contexts}`` for a call the FRONT END resolved to
     a package-scope function (`pkg_functions.callee` -- the IR form says so,
@@ -473,6 +475,10 @@ def classify(name: str, *, context: Ctx, target: str,
                 f"is in a {context.value} context"))
         return Result(Outcome.SUPPORTED, entry, "")
     if name in model_ops:
+        if name in solve_ops:
+            return _in_context(_e(name, Disposition.MODEL_OP, SOLVE_ONLY,
+                                  "22.2.3"),
+                               context, "a solve function of this model")
         return _in_context(_e(name, Disposition.MODEL_OP, TARGET_ONLY, "22.2.3"),
                            context, "an operation of this model")
     if name in imports:

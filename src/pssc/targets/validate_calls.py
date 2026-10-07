@@ -93,10 +93,25 @@ def is_super_call(func) -> bool:
             and _dt_name(getattr(func, "value", None)) == "TypeExprRefSuper")
 
 
+#: Function kinds a call on the model reaches as an operation: a `target`
+#: (or unqualified) function, and a `solve` function that is not the
+#: constructor -- the second only from solve context (`solve_ops`).
+_OP_KINDS = (FuncKind.EXPORT_OP, FuncKind.EXPORT_SOLVE)
+
+
 def own_ops(comp, ctor_names=None) -> FrozenSet[str]:
-    """The operations ``comp`` itself declares."""
+    """The operations ``comp`` itself declares, solve functions included."""
     return frozenset(fn.name for fn in (getattr(comp, "functions", None) or [])
-                     if func_kind(fn, ctor_names) is FuncKind.EXPORT_OP)
+                     if func_kind(fn, ctor_names) in _OP_KINDS)
+
+
+def solve_ops(root, ctor_names=None) -> FrozenSet[str]:
+    """The model's solve functions other than constructors, by name: the
+    operations a constructor and another solve function may call, and a
+    target function may not (LRM 22.2.3)."""
+    return frozenset(fn.name for comp in _components(root)
+                     for fn in (getattr(comp, "functions", None) or [])
+                     if func_kind(fn, ctor_names) is FuncKind.EXPORT_SOLVE)
 
 
 def ops_for_call(comp, func, ops: FrozenSet[str],
@@ -242,7 +257,7 @@ def model_names(root, ctor_names=None):
     for comp in comps:
         for fn in (getattr(comp, "functions", None) or []):
             kind = func_kind(fn, ctor_names)
-            if kind is FuncKind.EXPORT_OP:
+            if kind in _OP_KINDS:
                 ops.add(fn.name)
             elif kind is FuncKind.CONSTRUCTOR:
                 ctors.add(fn.name)
@@ -298,6 +313,7 @@ def validate_calls(root, ctx, target: str, *, report_only: bool = False,
     """
     comps, ops, ctors = model_names(root, ctor_names)
     comps = _with_extra(comps, extra_components)
+    solve_names = solve_ops(root, ctor_names)
     import_fns = getattr(ctx, "import_functions", None) or []
     imports: FrozenSet[str] = frozenset(f.name for f in import_fns)
     # Only the `target` qualifier is enforced on imports: a target import
@@ -364,7 +380,8 @@ def validate_calls(root, ctx, target: str, *, report_only: bool = False,
                                                        super_base)),
                                imports=imports,
                                import_contexts=import_contexts,
-                               subcomps=frozenset() if in_pkg else ctors)
+                               subcomps=frozenset() if in_pkg else ctors,
+                               solve_ops=solve_names)
             if res.outcome is Outcome.SUPPORTED:
                 continue
             msgs.append(f"{_site(comp, fn, call)}cannot lower call: "

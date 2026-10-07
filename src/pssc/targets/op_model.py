@@ -220,6 +220,14 @@ class OpModel:
         return [fn for fn in (getattr(dtype, "functions", None) or [])
                 if pm.func_kind(fn, self.ctor_names) is pm.FuncKind.EXPORT_OP]
 
+    def solve_functions(self, comp) -> List[Any]:
+        """The component's solve functions other than its constructor, in
+        declaration order: private operations, called in solve context."""
+        dtype = getattr(comp, "dtype", comp)
+        return [fn for fn in (getattr(dtype, "functions", None) or [])
+                if pm.func_kind(fn, self.ctor_names)
+                is pm.FuncKind.EXPORT_SOLVE]
+
     def entries_of(self, comp) -> List[Any]:
         """The entry points that run in ``comp``, in `--export-action` order."""
         dtype = getattr(comp, "dtype", comp)

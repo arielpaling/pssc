@@ -86,7 +86,9 @@ Found on the way:
     and `pss_imp`/`pss_model`). Cases: "names the generated code also uses",
     "root constructor parameters named like generated ones".
   * **`super.initialize(...)` in a constructor is not lowered.** It reports
-    "no function named `_pss_super_base_c_initialize`".
+    "no function named `_pss_super_base_c_initialize`". FIXED by W6 of
+    `op-model-issues-plan.md`: that private copy is a solve function, which
+    C now renders file-local.
 
 T1d (a mutation check of the C base) is covered by history: the T1 cases were
 strict xfails on C before F1 and pass after it.

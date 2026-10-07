@@ -1873,7 +1873,8 @@ def _initialize_def(comp, ctor, members, *, super_base=None) -> List[str]:
         be = _ExprOnly(members, ctor=ctor, comp=comp)
         be.super_base = super_base
         body = lower_init(ctor, members=members, reg_groups=reg_groups,
-                          subs=subs, bus=IMP_MEMBER, expr=be.expr, indent=3)
+                          subs=subs, bus=IMP_MEMBER, expr=be.expr, indent=3,
+                          own={f.name: f for f in comp.functions})
     elif ctor.args.args:
         base = mangle(ctor.args.args[0].arg)
         body = [f"      {members[g]} = new({IMP_MEMBER}, {base});"

@@ -99,6 +99,12 @@ sub-component's construct) and then `<p>_pss_ctor` (the constructor body). A
 `sub.initialize(...)` in a constructor is the child's `_pss_ctor` alone; the
 child was constructed already, whether or not anything calls it.
 
+A `solve function` other than the constructor is a private operation on every
+target (user ruling, 2026-10-07): the gate lets only solve context call one
+(`validate_calls.solve_ops`), and its body renders as a constructor's. C makes
+it `static` (`_solve_impl`), Python `_pss_solve_<name>`, C++ a member not on
+`<cls>_if`; SV keeps the PSS name.
+
 Which `solve function` is the constructor comes from `model.ctor_names`, never
 from `progseq_model.current_ctor_names()`. The ambient value remains only for
 callers outside a compile; no emitter reads it, and

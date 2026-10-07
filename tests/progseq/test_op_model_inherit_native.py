@@ -145,18 +145,12 @@ def test_python(tmp_path, case):
 
 
 #: C renders the COMPLETED (flattened) view rather than a class per type, but
-#: the behaviour is the same and so is the trace. A case C cannot run yet is a
-#: strict xfail naming its defect.
-_C_XFAIL = {
-    "constructors": "C does not lower super.initialize(...) in a constructor",
-}
-
-
+#: the behaviour is the same and so is the trace. `super.initialize(...)` is a
+#: call to a private copy of the base's constructor -- a solve function, which
+#: C renders file-local (`_solve_impl`).
 @pytest.mark.c_toolchain
 @pytest.mark.skipif(not _CC, reason="no C compiler")
-@pytest.mark.parametrize("case", [
-    pytest.param(c, marks=pytest.mark.xfail(strict=True, reason=_C_XFAIL[c]))
-    if c in _C_XFAIL else c for c in sorted(_CASES)])
+@pytest.mark.parametrize("case", sorted(_CASES))
 def test_c(tmp_path, case):
     pss, args, mem, want = _CASES[case]
     assert th._run_c(tmp_path, pss, args, mem) == want

@@ -249,9 +249,10 @@ class COpModelBackend:
             elif _dt_name(dt) == "DataTypeArray":
                 visit(getattr(dt, "element_type", None))
 
-        public = (FuncKind.EXPORT_OP, FuncKind.EXPORT_SOLVE,
-                  FuncKind.CONSTRUCTOR, FuncKind.IMPORT_TASK,
-                  FuncKind.IMPORT_SOLVE)
+        # A solve function other than the constructor is file-local
+        # (`_solve_impl`), so it names nothing in the header.
+        public = (FuncKind.EXPORT_OP, FuncKind.CONSTRUCTOR,
+                  FuncKind.IMPORT_TASK, FuncKind.IMPORT_SOLVE)
         for comp in self.comps:
             subs = {x.name for x in sub_components(comp)}
             for f in comp.fields:

@@ -28,6 +28,7 @@ from __future__ import annotations
 from typing import Callable, Dict, List, Optional
 
 from ..progseq_model import _dt_name, SubComp
+from .keywords import SV_KEYWORDS
 
 
 class InitLoweringError(ValueError):
@@ -46,21 +47,24 @@ def _self_attr_name(e) -> Optional[str]:
 
 def lower_init(ctor, *, members: Dict[str, str], reg_groups: List[str],
                subs: Dict[str, SubComp], bus: str,
-               expr: Callable[[object], str], indent: int = 3) -> List[str]:
+               expr: Callable[[object], str], indent: int = 3,
+               own: Optional[Dict[str, object]] = None) -> List[str]:
     """Return the SV method-body lines for ``ctor``.
 
     ``members`` maps a PSS field name to its generated member name, ``bus`` is
     the expression a rebuilt register group is wired to, and
     ``expr`` renders an IR expression (supplied by the caller so this module
-    stays free of expression lowering).
+    stays free of expression lowering). ``own`` is the component's functions
+    by name, for a call to one of its solve functions.
     """
     out: List[str] = []
     for stmt in (ctor.body or []):
-        out += _stmt(stmt, members, reg_groups, subs, bus, expr, indent)
+        out += _stmt(stmt, members, reg_groups, subs, bus, expr, indent, own)
     return out
 
 
-def _stmt(s, members, reg_groups, subs, bus, expr, ind) -> List[str]:
+def _stmt(s, members, reg_groups, subs, bus, expr, ind,
+          own=None) -> List[str]:
     pad = "  " * ind
     cn = _dt_name(s)
 
@@ -74,6 +78,18 @@ def _stmt(s, members, reg_groups, subs, bus, expr, ind) -> List[str]:
             if _dt_name(fn.value) == "TypeExprRefSuper":
                 args = ", ".join(expr(a) for a in call.args)
                 return [f"{pad}super.{fn.attr}({args});"]
+            # f(args): one of this component's solve functions, a method of
+            # the class (the gate refuses anything else in solve context). A
+            # result nobody reads is cast away, which SV requires of a
+            # function called as a statement.
+            if _dt_name(fn.value) == "TypeExprRefSelf" and fn.attr != "set_handle":
+                args = ", ".join(expr(a) for a in call.args)
+                name = fn.attr + "_" if fn.attr in SV_KEYWORDS else fn.attr
+                text = f"{name}({args})"
+                callee = (own or {}).get(fn.attr)
+                if getattr(callee, "returns", None) is not None:
+                    text = f"void'({text})"
+                return [f"{pad}{text};"]
             # regs.set_handle(h) -> build the register group at h
             if fn.attr == "set_handle":
                 name = _self_attr_name(fn.value)
@@ -93,7 +109,7 @@ def _stmt(s, members, reg_groups, subs, bus, expr, ind) -> List[str]:
             return [f"{pad}{members[name]} = {expr(s.value)};"]
 
     if cn == "StmtForeach":
-        return _foreach(s, members, reg_groups, subs, bus, expr, ind)
+        return _foreach(s, members, reg_groups, subs, bus, expr, ind, own)
 
     raise InitLoweringError(
         f"unsupported statement in init: {cn}. An init binds addresses; a "
@@ -101,7 +117,8 @@ def _stmt(s, members, reg_groups, subs, bus, expr, ind) -> List[str]:
         f"unbound, so this is an error rather than a skipped line.")
 
 
-def _foreach(s, members, reg_groups, subs, bus, expr, ind) -> List[str]:
+def _foreach(s, members, reg_groups, subs, bus, expr, ind,
+             own=None) -> List[str]:
     """`foreach (ch[i]) { ch[i].init(...); }` -> an indexed loop of calls."""
     pad = "  " * ind
     iter_name = _self_attr_name(getattr(s, "iter", None))
@@ -126,7 +143,8 @@ def _foreach(s, members, reg_groups, subs, bus, expr, ind) -> List[str]:
             attr = inner.expr.func.attr
             body.append(f"{pad}  {members[iter_name]}[{idx}].{attr}({args});")
         else:
-            body += _stmt(inner, members, reg_groups, subs, bus, expr, ind + 1)
+            body += _stmt(inner, members, reg_groups, subs, bus, expr, ind + 1,
+                          own)
 
     return ([f"{pad}for (int {idx} = 0; {idx} < {sub.size}; {idx}++) begin"]
             + body + [f"{pad}end"])
