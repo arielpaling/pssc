@@ -1478,7 +1478,8 @@ class _BodyEmitter(CIntSemantics, CallDispatch, BodyWalker):
             f"unsupported constant of type {type(v).__name__}")
 
     def expr_ref_local(self, e) -> str:
-        return self.arg_rename.get(e.name, e.name)
+        # A local is renamed as a parameter is: `int char;` does not compile.
+        return self.arg_rename.get(e.name) or mangle(e.name)
 
     def expr_attribute(self, e) -> str:
         base = e.value

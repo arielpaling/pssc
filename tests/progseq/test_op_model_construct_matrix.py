@@ -800,6 +800,20 @@ component pss_top {""" + _ONE + """
   target function void run() { setup(1); a.STS.write_val(x); }
 }""", Refused([r"'setup' is a solve function", r"target context"])),
 
+    # The same for C and C++: free in PSS, reserved there (`_self` is the
+    # generated handle). C and C++ renamed fields and parameters, not locals.
+    "fields, locals and a parameter named as C keywords": Case("""
+component pss_top {""" + _ONE + """
+  int auto = 1;
+  int register = 2;
+  target function int add(int short) { int char = short; return char; }
+  target function void run() {
+    int long = 4;
+    int _self = 5;
+    a.STS.write_val(auto + register + add(3) + long + _self);
+  }
+}""", ["write 32 0x1004 0xf"]),
+
     # --- A register value on the API -------------------------------------------
     # A layout is implementation until the API names it: here an operation
     # returns one, another takes one, and the root holds one. C kept every

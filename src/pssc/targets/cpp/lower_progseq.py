@@ -835,7 +835,8 @@ class _BodyEmitter(CIntSemantics):
                 return c_string_literal(v)
             raise ValueError(f"unsupported constant of type {type(v).__name__}")
         if cn == "ExprRefLocal":
-            return self.arg_rename.get(e.name, e.name)
+            # A local is renamed as a parameter is: `int char;` does not compile.
+            return self.arg_rename.get(e.name) or mangle(e.name)
         if cn == "ExprRefUnresolved":
             # A package-scope constant or enumerator: a plain identifier here.
             return e.name

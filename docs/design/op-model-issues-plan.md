@@ -161,9 +161,11 @@ differ; a C scalar local is declared with its default. Matrix case: "default
 values: an enum's first item, a bare local". C goldens: locals gain `= 0` and
 `= WB_DMA_DONE`.
 
-**W10. An array initializer (`array<bit[32], 3> v = {1, 2, 3};`).** Found
-with W9: every target fails with an internal error (`ExprList` has no
-rendering). Not scheduled; the minimum is a `CompileError`.
+**W12. Locals named as C keywords (C, C++).** Found after W8: C and C++
+renamed a field or parameter spelled as a keyword (`char`, `long`, `_self`)
+but not a local, so `int char = 3;` did not compile. DONE: a local is renamed
+as a parameter is. Matrix case: "fields, locals and a parameter named as C
+keywords".
 
 ## 3. Carried over from the earlier list
 
@@ -189,4 +191,4 @@ report:
 
 One per item, each with its matrix cases: W1 (refusal) -> W2 -> W3 -> W8 ->
 W5 -> W9 -> W11 -> W4 -> W7 -> W6 (which also fixed C `super.initialize`)
--> W10.
+-> W12 -> W10.
