@@ -59,7 +59,7 @@ def test_value_unions_and_groups(gen):
     assert "namespace wb_dma {" in h
     assert "typedef union { std::uint32_t raw; struct {" in h
     assert "class dma_channel_regs_c {" in h
-    assert "pssc::reg<dma_ch_csr_t> CSR;" in h
+    assert "pssc::reg<dma_ch_csr_s> CSR;" in h
     # READONLY mapped to access::ro
     assert "pssc::reg<std::uint32_t, pssc::access::ro> INT_SRC_A;" in h
     # array of groups via std::array + index helper
@@ -69,14 +69,14 @@ def test_value_unions_and_groups(gen):
 
 def test_apis_and_component(gen):
     h = _hpp(gen)
-    assert "struct wb_dma_if {" in h
+    assert "struct dma_engine_c_if {" in h
     assert "virtual int mem_to_mem_copy(int channel," in h
     # The platform seam is named uniformly in every signature. This model
     # declares no imports, so the name IS pssc::mem_if -- see emit_import_api.
     assert "using wb_dma_import_if = pssc::mem_if;" in h
-    assert "class wb_dma : public wb_dma_if {" in h
+    assert "class dma_engine_c : public dma_engine_c_if {" in h
     assert "wb_dma_import_if &imp_;" in h
-    assert "std::unique_ptr<wb_dma_if> create(wb_dma_import_if &imp, " \
+    assert "std::unique_ptr<dma_engine_c_if> create(wb_dma_import_if &imp, " \
         "pssc::addr_t base)" in h
     # native member-call body + native do...while
     assert "this->regs.channels[channel].CSR.read();" in h
@@ -92,7 +92,7 @@ def test_construction_is_two_phase(gen):
     for the root, which is what a caller normally wants.
     """
     h = _hpp(gen)
-    assert "explicit wb_dma(wb_dma_import_if &imp)" in h
+    assert "explicit dma_engine_c(wb_dma_import_if &imp)" in h
     assert "void initialize(pssc::addr_t base) {" in h
     # The group is bound in initialize, not at construction: constructed at 0
     # so an operation called before initialize faults rather than reading

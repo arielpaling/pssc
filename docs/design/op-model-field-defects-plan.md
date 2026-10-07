@@ -50,7 +50,15 @@ Found on the way:
     PSS gives `106 117 117`. This one is SILENT. LRM 20.1.2 constructs every
     instance.
   * **A sub-component named `t` collides with the handle type.** The accessor
-    `<prefix>_t()` redeclares the typedef `<prefix>_t`.
+    `<prefix>_t()` redeclares the typedef `<prefix>_t`. FIXED: C and C++ types
+    now keep their PSS names (`pss_top`, `x_c`, `x_s`, `x_e`), and
+    `targets/c/c_names.py` refuses any remaining duplicate C name (a
+    sub-component or operation named `create`, `destroy` or `init`) as a
+    user error naming both sources.
+  * **A C parameter or local named `s` collides with the handle parameter.**
+    `x_f(x_c *s, x_s s)` does not compile; `self` and `bus` in a constructor's
+    parameters would do the same. Open: needs one mangling rule for
+    parameters and locals, applied at every declaration and reference.
   * **`super.initialize(...)` in a constructor is not lowered.** It reports
     "no function named `_pss_super_base_c_initialize`".
 

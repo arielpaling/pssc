@@ -338,7 +338,7 @@ def test_an_included_header_can_define_the_barrier(tmp_path):
         "int plat_barriers;\n"
         "static uint32_t space[64];\n"
         "int main(void) {\n"
-        "  static wb_dma_t dma;\n"
+        "  static wb_dma_c dma;\n"
         "  wb_dma_init(&dma, (pssc_addr_t)(uintptr_t)space);\n"
         "  wb_dma_ch_set_auto_restart(wb_dma_ch(&dma, 1), 1);\n"
         "  return plat_barriers > 0 ? 0 : 1;\n"
@@ -469,7 +469,7 @@ def test_narrowing_the_address_shrinks_the_object_on_a_32_bit_target(tmp_path):
         d = tmp_path / f"a{bits}"
         d.mkdir()
         out = _gen_inc(d, link_style="vtable", c_addr_bits=bits)
-        (out / "sz.c").write_text('#include "wb_dma.h"\nwb_dma_t d;\n')
+        (out / "sz.c").write_text('#include "wb_dma.h"\nwb_dma_c d;\n')
         r = subprocess.run([cc, "-m32", "-std=c99", "-Os", "-I", str(out),
                             "-c", "sz.c", "-o", "sz.o"],
                            cwd=str(out), capture_output=True, text=True)

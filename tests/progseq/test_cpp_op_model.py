@@ -84,46 +84,46 @@ def test_each_component_gets_an_interface_and_a_class(h):
     """The projection is of a component TREE. Before this, the backend emitted
     the root alone -- for WB DMA that is four engine-global operations and none
     of the thirteen per-channel ones."""
-    assert_cpp(h, has=["struct wb_dma_ch_if {", "class wb_dma_ch : public wb_dma_ch_if {",
-                       "struct wb_dma_if {", "class wb_dma : public wb_dma_if {"])
+    assert_cpp(h, has=["struct wb_dma_ch_c_if {", "class wb_dma_ch_c : public wb_dma_ch_c_if {",
+                       "struct wb_dma_c_if {", "class wb_dma_c : public wb_dma_c_if {"])
 
 
 def test_the_child_precedes_the_parent(h):
     """The parent holds its children BY VALUE, so the child has to be a
     complete type by the time the parent's class is declared."""
-    assert h.index("class wb_dma_ch :") < h.index("class wb_dma :")
+    assert h.index("class wb_dma_ch_c :") < h.index("class wb_dma_c :")
 
 
 def test_sub_components_are_members_not_pointers(h):
     """The PSS tree is static (elaboration-time), so the C++ tree is too: one
     object covers every level and there is nothing to allocate below the root."""
-    assert_cpp(h, has=["std::array<wb_dma_ch, 4> ch_;"],
-               has_not=["std::array<wb_dma_ch *, 4>",
-                        "std::vector<wb_dma_ch>",
-                        "std::unique_ptr<wb_dma_ch> ch_"])
+    assert_cpp(h, has=["std::array<wb_dma_ch_c, 4> ch_;"],
+               has_not=["std::array<wb_dma_ch_c *, 4>",
+                        "std::vector<wb_dma_ch_c>",
+                        "std::unique_ptr<wb_dma_ch_c> ch_"])
 
 
 def test_sub_component_access_is_on_the_interface(h):
     """`create()` hands back the interface, so anything not reachable through
     it is not reachable at all."""
     assert_cpp(h, has=["static constexpr std::size_t ch_count = 4;",
-                       "virtual wb_dma_ch_if &ch(std::size_t i) = 0;",
-                       "wb_dma_ch_if &ch(std::size_t i) override "
+                       "virtual wb_dma_ch_c_if &ch(std::size_t i) = 0;",
+                       "wb_dma_ch_c_if &ch(std::size_t i) override "
                        "{ return ch_[i]; }"])
 
 
 def test_no_parent_back_pointer(h):
     """Nothing in the model refers upward -- checked, not assumed -- so nothing
     stores a way to go up. One added "just in case" would sit in every channel."""
-    assert_cpp(h, has_not=["wb_dma *parent", "wb_dma &parent_", "wb_dma *owner"])
+    assert_cpp(h, has_not=["wb_dma_c *parent", "wb_dma_c &parent_", "wb_dma_c *owner"])
 
 
 def test_component_state_is_declared(h):
     """`chan` and `caps` are the channel's own state; without them
     `this->caps.ars` in an operation body has nowhere to resolve to."""
-    ch = h[h.index("class wb_dma_ch :"):h.index("class wb_dma :")]
+    ch = h[h.index("class wb_dma_ch_c :"):h.index("class wb_dma_c :")]
     assert "int chan{};" in ch
-    assert "wb_dma_ch_caps_t caps{};" in ch
+    assert "wb_dma_ch_caps_s caps{};" in ch
 
 
 # --- construction -----------------------------------------------------------
@@ -132,9 +132,9 @@ def test_construction_is_two_phase(h):
     """A parent computes its CHILDREN's base addresses in its own constructor
     body, which runs after the children -- as members -- already exist. So the
     C++ constructor takes the seam, and `initialize` runs the PSS one."""
-    assert_cpp(h, has=["explicit wb_dma_ch(wb_dma_import_if &imp)",
+    assert_cpp(h, has=["explicit wb_dma_ch_c(wb_dma_import_if &imp)",
                        "void initialize(int id, pssc::addr_t bank) {",
-                       "explicit wb_dma(wb_dma_import_if &imp)",
+                       "explicit wb_dma_c(wb_dma_import_if &imp)",
                        "void initialize(pssc::addr_t base) {"])
 
 
@@ -155,7 +155,7 @@ def test_register_groups_are_bound_once(h):
 
 
 def test_the_factory_returns_the_interface(h):
-    assert_cpp(h, has=["static std::unique_ptr<wb_dma_if> create("
+    assert_cpp(h, has=["static std::unique_ptr<wb_dma_c_if> create("
                        "wb_dma_import_if &imp, pssc::addr_t base) {",
                        "self->initialize(base);"])
 
@@ -186,9 +186,9 @@ def test_an_enumerator_survives_into_a_return(h):
 
 def test_plain_structs_are_aggregates_with_zeroed_members(h):
     """A generated aggregate stays an aggregate, so a caller can still write
-    `wb_dma_ch_caps_t c{true, false};` -- and a default-constructed one is
+    `wb_dma_ch_caps_s c{true, false};` -- and a default-constructed one is
     zeroed rather than holding whatever was on the stack."""
-    assert_cpp(h, has=["struct wb_dma_ch_caps_t {", "bool present = {};"])
+    assert_cpp(h, has=["struct wb_dma_ch_caps_s {", "bool present = {};"])
 
 
 # --- bodies -----------------------------------------------------------------
@@ -335,7 +335,7 @@ def test_yield_import_declares_the_hook_on_the_seam(tmp_path):
         ' { return pssc::mmio_mem::read64(a); }\n'
         '    void yield_() override {}\n'
         '};\n'
-        'int main() { seam s; auto d = wb_dma::wb_dma::create(s, 0x1000);'
+        'int main() { seam s; auto d = wb_dma::wb_dma_c::create(s, 0x1000);'
         ' d->ch(0).wait_hint(); return 0; }\n')
     res = subprocess.run(
         [_CXX[0], "-std=c++17", "-Wall", "-Wextra", "-Werror", "-I",

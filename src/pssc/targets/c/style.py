@@ -79,7 +79,7 @@ class CStylePolicy(StylePolicy):
 
     name = "default"
     target = "op-model-c"
-    description = "pssc's own C conventions (snake_case, `_t` types)"
+    description = "pssc's own C conventions (snake_case, PSS type names)"
 
     # -- files ---------------------------------------------------------------
 
@@ -109,13 +109,21 @@ class CStylePolicy(StylePolicy):
         """
         return f"{comp_prefix}_{name}"
 
-    def type_name(self, comp_prefix: str) -> str:
-        """The component handle type: ``wb_dma`` -> ``wb_dma_t``."""
-        return f"{comp_prefix}_t"
+    def type_name(self, type_name: str) -> str:
+        """The component handle type: the PSS type's name, ``wb_dma_c`` ->
+        ``wb_dma_c`` (or the name `--prefix-map` gave the type).
 
-    def struct_tag(self, comp_prefix: str) -> str:
-        """The struct tag behind the typedef: ``wb_dma`` -> ``wb_dma_s``."""
-        return f"{comp_prefix}_s"
+        The PSS name, not one derived from the symbol prefix. A derived name
+        shares the prefix's namespace with every function, and `<prefix>_t`
+        was ALSO the accessor of a sub-component named `t`. PSS already keeps
+        its type names distinct; renaming them could only make two collide.
+        """
+        return type_name
+
+    def struct_tag(self, type_name: str) -> str:
+        """The struct tag behind the typedef: the typedef's own name. C keeps
+        tags in a namespace of their own, so `typedef struct x x;` is legal."""
+        return self.type_name(type_name)
 
     def reg_symbol(self, comp_prefix: str, path, reg: str) -> str:
         """The accessor stem for one register: ``wb_dma`` + ``["regs"]`` +

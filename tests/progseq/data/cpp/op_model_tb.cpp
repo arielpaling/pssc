@@ -60,9 +60,9 @@ struct mock_bus : wb_dma::wb_dma_import_if {
 // The platform's other obligation: four operations call `message(...)`.
 namespace pssc { void message(const char *, ...) {} }
 
-static wb_dma::wb_dma_ch_cfg_t a_config()
+static wb_dma::wb_dma_ch_cfg_s a_config()
 {
-    wb_dma::wb_dma_ch_cfg_t c{};
+    wb_dma::wb_dma_ch_cfg_s c{};
     c.src         = 0x1000u;
     c.dst         = 0x2000u;
     c.tot_sz      = 64u;
@@ -81,7 +81,7 @@ static void case_transfer_on_channel_2(mock_bus &bus)
 {
     const int CH = 2;
     om_init(&mock, BASE);
-    auto dma = wb_dma::wb_dma::create(bus, BASE);
+    auto dma = wb_dma::wb_dma_c::create(bus, BASE);
     auto cfg = a_config();
 
     wb_dma::wb_dma_status_e st = dma->ch(CH).transfer_single(cfg);
@@ -122,7 +122,7 @@ static void case_transfer_on_channel_2(mock_bus &bus)
 static void case_every_channel_is_distinct(mock_bus &bus)
 {
     om_init(&mock, BASE);
-    auto dma = wb_dma::wb_dma::create(bus, BASE);
+    auto dma = wb_dma::wb_dma_c::create(bus, BASE);
     auto cfg = a_config();
 
     for (int i = 0; i < OM_CH_COUNT; i++) {
@@ -143,7 +143,7 @@ static void case_stop_is_an_error(mock_bus &bus)
 {
     const int CH = 3;
     om_init(&mock, BASE);
-    auto dma = wb_dma::wb_dma::create(bus, BASE);
+    auto dma = wb_dma::wb_dma_c::create(bus, BASE);
     auto cfg = a_config();
 
     dma->ch(CH).transfer_single_start(cfg);
@@ -160,7 +160,7 @@ static void case_stop_is_an_error(mock_bus &bus)
 static void case_engine_global_registers(mock_bus &bus)
 {
     om_init(&mock, BASE);
-    auto dma = wb_dma::wb_dma::create(bus, BASE);
+    auto dma = wb_dma::wb_dma_c::create(bus, BASE);
 
     dma->pause_engine(true);
 
@@ -178,7 +178,7 @@ static void case_masked_write_reads_first(mock_bus &bus)
 {
     const int CH = 1;
     om_init(&mock, BASE);
-    auto dma = wb_dma::wb_dma::create(bus, BASE);
+    auto dma = wb_dma::wb_dma_c::create(bus, BASE);
     std::uint64_t csr = om_ch_reg(&mock, CH, R_CSR);
 
     dma->ch(CH).set_auto_restart(true);

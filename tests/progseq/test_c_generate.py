@@ -48,7 +48,7 @@ def _hc(d):
 
 def test_value_unions(vtable):
     h = _hc(vtable)
-    for t in ("dma_ch_csr_t", "dma_ch_sz_t", "dma_ch_swptr_t", "dma_csr_t"):
+    for t in ("dma_ch_csr_s", "dma_ch_sz_s", "dma_ch_swptr_s", "dma_csr_s"):
         assert f"}} {t};" in h, t
     # LSB-first (declaration order): CH_EN [0] precedes INT_CHK_DONE [22]
     assert h.index("CH_EN") < h.index("INT_CHK_DONE")
@@ -70,7 +70,7 @@ def test_baked_accessors(vtable):
 def test_export_api_native(vtable):
     h, c = _h(vtable), _c(vtable)
     # native int return, opaque handle first arg, no output-status
-    assert "int wb_dma_mem_to_mem_copy(wb_dma_t *s, int channel," in h
+    assert "int wb_dma_mem_to_mem_copy(dma_engine_c *s, int channel," in h
     assert "do {" in c and "} while (" in c           # native do...while
     assert "output" not in c
     # vtable create takes the bus
@@ -120,5 +120,5 @@ def test_reg_style_accessors(tmp_path):
     # implementation -- so the whole thing lands there, helpers included.
     h = _c(d)
     # layout-independent path: plain raw word + shift/mask helpers
-    assert "dma_ch_csr_t_PRIORITY_get" in h
-    assert "dma_ch_csr_t_PRIORITY_set" in h
+    assert "dma_ch_csr_s_PRIORITY_get" in h
+    assert "dma_ch_csr_s_PRIORITY_set" in h

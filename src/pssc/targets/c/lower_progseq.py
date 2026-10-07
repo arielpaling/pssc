@@ -239,15 +239,14 @@ def c_string_literal(s: str) -> str:
 # --- type mapping ----------------------------------------------------------
 
 def c_enum_name(enum_dtype) -> str:
-    """C type name for a PSS enum: ``wb_dma_status_e`` -> ``wb_dma_status_t``.
+    """C type name for a PSS enum: its PSS name, ``wb_dma_status_e``.
 
-    Same rule :func:`c_struct_name` applies to ``_s``, so one suffix convention
-    covers both and a reader never has to remember which kind a name came from.
+    Same rule as :func:`c_struct_name`: a PSS type keeps its name.
     """
     n = (getattr(enum_dtype, "name", None) or "").split("::")[-1]
     if not n:
         raise ValueError("enum type has no name; cannot emit a C typedef")
-    return (n[:-2] + "_t") if n.endswith("_e") else (n + "_t")
+    return n
 
 
 def c_type(dtype) -> str:
@@ -325,8 +324,11 @@ class Prefixes:
     The prefix comes from the component's TYPE name, not from its instance
     path: ``ch[0]`` and ``ch[3]`` share one body and are told apart by the
     handle, which is the entire reason for passing one. The root is the one
-    exception -- it keeps the prefix the caller asked for via ``--prefix``, so
-    the generated file name and its main type still agree.
+    exception -- it keeps the prefix the caller asked for via ``--prefix``,
+    which names the files and the functions but not the type.
+
+    It also holds each component's TYPE name (:meth:`type_name`): the PSS name,
+    unless ``--prefix-map`` renamed the type.
 
     Two types that collide after ``_c``-stripping are a generation ERROR rather
     than a last-writer-wins overwrite: the second component's operations would
@@ -337,14 +339,16 @@ class Prefixes:
 
     def __init__(self, model, root_prefix: str,
                  overrides: Optional[Dict[str, str]] = None,
-                 language: str = "C"):
+                 language: str = "C", check_prefixes: bool = True):
         #: Named in the collision diagnostic. The C++ backend shares this class
         #: -- the question ("do two component types map to one name?") and its
         #: answer are the same in both languages, and two copies could disagree.
         self._language = language
         self._by_id: Dict[int, str] = {}
+        self._types: Dict[int, str] = {}
         overrides = overrides or {}
         used: Dict[str, str] = {}
+        used_t: Dict[str, str] = {}
         # Tree components, then the base classes a backend rendering
         # inheritance natively emits though nothing instantiates them
         # (`OpModel.base_classes`; none for a flattening one).
@@ -360,22 +364,34 @@ class Prefixes:
             # for. An override may be given under either spelling.
             qname = getattr(node.dtype, "name", None) or "<anon>"
             tname = qname.split("::")[-1]
+            # The TYPE keeps its PSS name unless it was mapped, and a mapped
+            # one takes the mapped name as its type too: the map is how two
+            # types with one short name are told apart, and it would not tell
+            # them apart if it renamed only their functions.
+            ty = tname
             if qname in overrides:
-                p = overrides[qname]
+                p = ty = overrides[qname]
             elif tname in overrides:
-                p = overrides[tname]
+                p = ty = overrides[tname]
             elif i == 0:
                 p = root_prefix
             else:
                 p = strip_c_suffix(tname)
-            if p in used and used[p] != qname:
+            if check_prefixes and p in used and used[p] != qname:
                 raise ValueError(
                     f"component types '{used[p]}' and '{qname}' both map to the "
                     f"{self._language} symbol prefix '{p}', so their operations "
                     f"would be emitted under the same names. Disambiguate with "
                     f"--prefix-map {qname}=<prefix>.")
+            if ty in used_t and used_t[ty] != qname:
+                raise ValueError(
+                    f"component types '{used_t[ty]}' and '{qname}' are both "
+                    f"named '{ty}' in {self._language}. Disambiguate with "
+                    f"--prefix-map {qname}=<name>.")
             used[p] = qname
+            used_t[ty] = qname
             self._by_id[id(node.dtype)] = p
+            self._types[id(node.dtype)] = ty
 
     def __getitem__(self, dtype) -> str:
         try:
@@ -388,6 +404,12 @@ class Prefixes:
 
     def __contains__(self, dtype) -> bool:
         return id(dtype) in self._by_id
+
+    def type_name(self, dtype) -> str:
+        """The component's type name: its PSS name, or its `--prefix-map`
+        name. A style policy may still respell it (`CStylePolicy.type_name`)."""
+        self[dtype]          # the same diagnostic for a type not in the tree
+        return self._types[id(dtype)]
 
 
 def parse_prefix_map(spec: Optional[Sequence[str]]) -> Dict[str, str]:
@@ -568,7 +590,7 @@ def _sub_member_decl(sub, prefixes, style=None) -> str:
     (elaboration-time), so the C tree is too: one caller-provided object covers
     every level and there is nothing to allocate. See the design's §4.1.
     """
-    t = _style(style).type_name(prefixes[sub.dtype])
+    t = _style(style).type_name(prefixes.type_name(sub.dtype))
     if sub.is_array:
         if sub.size is None or sub.size < 0:
             raise ValueError(
@@ -592,7 +614,7 @@ def emit_handle(node, prefixes, link_style: str = "vtable",
     comp = node.dtype
     prefix = prefixes[comp]
     lines = doc_block(getattr(comp, "doc", None), "", BLOCK)
-    lines.append(f"typedef struct {style.struct_tag(prefix)} {{")
+    lines.append(f"typedef struct {style.struct_tag(prefixes.type_name(comp))} {{")
     if link_style == "vtable":
         # Every component carries its own bus pointer, not just the root. A
         # sub-component's register accessors call pssc_bus(s) with ITS handle,
@@ -613,7 +635,7 @@ def emit_handle(node, prefixes, link_style: str = "vtable",
         lines.append(f"    {_chan_member(f)}")
     for sub in sub_components(comp):
         lines.append(f"    {_sub_member_decl(sub, prefixes, style)}")
-    lines.append(f"}} {style.type_name(prefix)};")
+    lines.append(f"}} {style.type_name(prefixes.type_name(comp))};")
     return "\n".join(lines)
 
 
@@ -676,11 +698,11 @@ def _sub_accessors(node, prefixes, style=None) -> List[str]:
     style = _style(style)
     comp = node.dtype
     parent = prefixes[comp]
-    parent_t = style.type_name(parent)
+    parent_t = style.type_name(prefixes.type_name(comp))
     out: List[str] = []
     for sub in sub_components(comp):
         name = style.symbol(parent, mangle(sub.name))
-        sub_t = style.type_name(prefixes[sub.dtype])
+        sub_t = style.type_name(prefixes.type_name(sub.dtype))
         if sub.is_array:
             out.append(
                 f"#define {style.macro(parent, mangle(sub.name) + '_COUNT')} "
@@ -725,11 +747,12 @@ def _op_params(fn) -> str:
     return (", " + ", ".join(parts)) if parts else ""
 
 
-def _op_signature(fn, prefix: str, qual: str = "", style=None) -> str:
+def _op_signature(fn, prefix: str, type_name: str, qual: str = "",
+                  style=None) -> str:
     style = _style(style)
     ret = c_type(fn.returns) if fn.returns is not None else "void"
     return (f"{qual}{ret} {style.symbol(prefix, mangle(fn.name))}"
-            f"({style.type_name(prefix)} *s{_op_params(fn)})")
+            f"({style.type_name(type_name)} *s{_op_params(fn)})")
 
 
 # --- the import surface (C4.1) ---------------------------------------------
@@ -2055,7 +2078,8 @@ def _sig_all(node, prefixes, link_style: str, qual: str, is_root: bool,
     style = _style(style)
     comp = node.dtype
     prefix = prefixes[comp]
-    sym, prefix_t = style.symbol, style.type_name(prefix)
+    sym = style.symbol
+    prefix_t = style.type_name(prefixes.type_name(comp))
     ctor = _ctor(comp, ctor_names)
     cp = _create_params(ctor, link_style)
     sig_params = f", {cp}" if cp else ""
@@ -2070,7 +2094,8 @@ def _sig_all(node, prefixes, link_style: str, qual: str, is_root: bool,
         # the same deliberate duplication the SV target makes.
         blank_line(out)
         out += doc_block(getattr(fn, "doc", None), "", BLOCK)
-        out.append(f"{_op_signature(fn, prefix, qual, style)};")
+        sig = _op_signature(fn, prefix, prefixes.type_name(comp), qual, style)
+        out.append(f"{sig};")
     return out
 
 
@@ -2105,7 +2130,8 @@ def _lifecycle_impl(node, prefixes, link_style: str, qual: str,
     style = _style(style)
     comp = node.dtype
     prefix = prefixes[comp]
-    sym, prefix_t = style.symbol, style.type_name(prefix)
+    sym = style.symbol
+    prefix_t = style.type_name(prefixes.type_name(comp))
     ctor = _ctor(comp, ctor_names)
     cp = _create_params(ctor, link_style)
     sig_params = f", {cp}" if cp else ""
@@ -2188,6 +2214,9 @@ class OpCtx:
     #: lowering's business, and an override that reads it is reaching past the
     #: seam rather than through it.
     be_kw: Mapping[str, Any]
+    #: The component's type name, before the style respells it
+    #: (`Prefixes.type_name`).
+    type_name: str = ""
 
     def body_emitter(self, fn):
         """The emitter that renders ``fn``'s body."""
@@ -2202,7 +2231,8 @@ def lower_operation(fn, ctx: OpCtx) -> List[str]:
     be = ctx.body_emitter(fn)
     style = ctx.be_kw.get("style")
     lines = list(doc_block(getattr(fn, "doc", None), "", BLOCK))
-    lines.append(f"{_op_signature(fn, ctx.prefix, ctx.qual, style)} {{")
+    sig = _op_signature(fn, ctx.prefix, ctx.type_name, ctx.qual, style)
+    lines.append(f"{sig} {{")
     body = be.stmts(fn.body, 1)
     # An operation that touches neither a register nor a member never
     # names the handle, and `-Wextra -Werror` -- which any real firmware
@@ -2256,6 +2286,7 @@ def lower_impl(model, prefixes, *, link_style: str = "vtable",
                                  emitter_cls=emitter_cls, **be_kw)
         lines.append("")
         ctx = OpCtx(comp=comp, prefix=prefix, qual=qual,
+                    type_name=prefixes.type_name(comp),
                     emitter_cls=emitter_cls,
                     be_kw=dict(reg_style=reg_style, prefixes=prefixes,
                                link_style=link_style, ctor_names=ctor_names,

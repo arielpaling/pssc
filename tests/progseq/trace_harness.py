@@ -134,7 +134,7 @@ static uint64_t r64(void *c, pssc_addr_t a) { (void)c; return rd(64, a); }
 
 int main(void) {
     static const pssc_mem_if bus = { w8, r8, w16, r16, w32, r32, w64, r64, 0 };
-    pss_top_t *top;
+    pss_top *top;
     @PRELOAD@
     top = pss_top_create(&bus@ARGS@);
     pss_top_run(top);

@@ -83,7 +83,12 @@ def generate(model, namespace: str, *,
     from .lower_progseq import (class_names, lower_components, emit_import_api,
                                 parse_class_map)
 
-    names = class_names(model, namespace, parse_class_map(class_map))
+    from ...driver import CompileError
+    try:
+        names = class_names(model, namespace, parse_class_map(class_map))
+    except ValueError as e:
+        # Two component types with one class name: the model's error.
+        raise CompileError(str(e)) from None
     comps = model.comp_dtypes_root_first
     _log.info("cpp-progseq: classes: %s",
               ", ".join(f"{getattr(c, 'name', '?')}->{names[c]}" for c in comps))

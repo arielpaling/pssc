@@ -78,6 +78,17 @@ Two rules hold it together, and both are tested
   not exist, so an upstream rename surfaces instead of silently dropping a
   customisation.
 
+**A type keeps its PSS name**, in C and C++ alike: the component `wb_dma_c`,
+the struct `wb_dma_ch_cfg_s`, the enum `wb_dma_status_e`
+(`Prefixes.type_name`; user ruling, 2026-10-07). Functions stay
+`<prefix>_<name>`, the prefix being the type name without `_c`; a
+`--prefix-map` entry renames the type as well, since it is how two components
+with one name are told apart. C has one namespace for all of it, so
+`targets/c/c_names.py` gathers every file-scope name from the functions that
+spell it and refuses a duplicate before any file is written (a sub-component
+named `create` is the factory's name). A new naming rule adds its names there;
+`test_c_names.py` fails if the check gathers a name the backend does not emit.
+
 Which `solve function` is the constructor comes from `model.ctor_names`, never
 from `progseq_model.current_ctor_names()`. The ambient value remains only for
 callers outside a compile; no emitter reads it, and

@@ -57,7 +57,7 @@ static void     w64(void *c, pssc_addr_t a, uint64_t d) { dma_mock_write64((dma_
 static uint64_t r64(void *c, pssc_addr_t a)             { return dma_mock_read64((dma_mock_t *)c, a); }
 #endif
 
-static int run_selfcheck(wb_dma_t *dma, dma_mock_t *m, uint64_t base) {
+static int run_selfcheck(dma_engine_c *dma, dma_mock_t *m, uint64_t base) {
     int errors = 0, status;
 
     /* 1) configure_channel: sets PRIORITY/MODE/SRC/DST, leaves CH_EN clear. */
@@ -119,13 +119,13 @@ int main(void) {
     int errors;
 #if defined(PSSC_LINK_DIRECT)
     dma_mock_init(&g_mock, base);
-    wb_dma_t *dma = wb_dma_create(base);
+    dma_engine_c *dma = wb_dma_create(base);
     errors = run_selfcheck(dma, &g_mock, base);
 #else
     static dma_mock_t mock;
     dma_mock_init(&mock, base);
     pssc_mem_if busif = { w8, r8, w16, r16, w32, r32, w64, r64, &mock };
-    wb_dma_t *dma = wb_dma_create(&busif, base);
+    dma_engine_c *dma = wb_dma_create(&busif, base);
     errors = run_selfcheck(dma, &mock, base);
 #endif
     wb_dma_destroy(dma);

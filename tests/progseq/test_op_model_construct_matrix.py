@@ -142,6 +142,46 @@ component pss_top {
   target function void run() { a.STS.write_val(1); b.CTL.write_val(2); }
 }""", Refused([r"\bb\b", r"never bound"])),
 
+    # --- Names: a generated API names a PSS type as PSS does -------------------
+    # C named a component `<prefix>_t` and a sub-component's accessor
+    # `<prefix>_<sub>`, so a sub-component `t` declared the type's name a
+    # second time and the header did not compile.
+    "a sub-component named t": Case("""
+component leaf_c {
+  ga_c a;
+  solve function void initialize(addr_handle_t base) { a.set_handle(base); }
+  target function void poke(bit[32] v) { a.STS.write_val(v); }
+}
+component pss_top {
+  leaf_c t;
+  leaf_c u;
+  solve function void initialize(addr_handle_t base) {
+    t.initialize(base);
+    u.initialize(make_handle_from_handle(base, 0x100));
+  }
+  target function void run() { t.poke(1); u.poke(2); }
+}""", ["write 32 0x1004 0x1", "write 32 0x1104 0x2"]),
+
+    # C and C++ rewrote `_c`, `_s` and `_e` to `_t`, which made these three
+    # PSS types one C type.
+    "a component, a struct and an enum with one stem": Case("""
+enum x_e { XA = 1, XB = 2 }
+struct x_s { bit[32] v; }
+component x_c {
+  target function bit[32] f(x_s p, x_e e) {
+    if (e == XB) { return p.v; }
+    return 0;
+  }
+}
+component pss_top {""" + _ONE + """
+  x_c x;
+  target function void run() {
+    x_s v;
+    v.v = 5;
+    a.STS.write_val(x.f(v, XB));
+  }
+}""", ["write 32 0x1004 0x5"]),
+
     # --- D2: operations of a sub-component -------------------------------------
     "calling a sub-component's operation": Case("""
 component sub_c {

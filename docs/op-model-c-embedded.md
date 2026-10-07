@@ -27,21 +27,31 @@ headers. Then:
 ```c
 #include "wb_dma.h"
 
-static wb_dma_t g_dma;                       /* no malloc: --lifecycle static */
+static wb_dma_c g_dma;                       /* no malloc: --lifecycle static */
 
 void dma_bringup(void) {
     wb_dma_init(&g_dma, &my_bus, 0x9d000000u);
 }
 
 int dma_copy(uint32_t src, uint32_t dst, uint16_t words) {
-    wb_dma_ch_t     *ch = wb_dma_ch(&g_dma, 0);
-    wb_dma_ch_cfg_t  cfg = {0};              /* you initialise this -- see §6 */
+    wb_dma_ch_c     *ch = wb_dma_ch(&g_dma, 0);
+    wb_dma_ch_cfg_s  cfg = {0};              /* you initialise this -- see §6 */
     cfg.src = src; cfg.dst = dst; cfg.tot_sz = words;
     cfg.int_on_done = 1;
 
     return wb_dma_ch_transfer_single(ch, cfg) == WB_DMA_DONE ? 0 : -1;
 }
 ```
+
+A type keeps its PSS name -- the component `wb_dma_c`, the struct
+`wb_dma_ch_cfg_s`, the enum `wb_dma_status_e` -- and a function is
+`<prefix>_<name>`, where `--prefix` names the root's functions and files and
+each other component's prefix is its type name without `_c`. `--prefix-map
+TYPE=NAME` renames a component's type AND its functions; it is how two
+components with one name in different packages are told apart. C has one
+namespace for all of these, so a model in which two of them come out the same
+-- a sub-component named `create` beside the root's `wb_dma_create` -- is
+refused, naming both.
 
 Every operation the model declares is present. There is no reduced "firmware
 subset": the end-to-end operations exist here exactly as they do in the
@@ -182,7 +192,7 @@ works. The same applies to `PSSC_MEM_BARRIER` and `PSSC_UNREACHABLE`.
 ## 6. Configuration structs have no defaults
 
 A model may state `constraint default src_mask == 0xfffffffc`. **That does not
-reach the C API**, because constraints are excluded (§3). `wb_dma_ch_cfg_t cfg =
+reach the C API**, because constraints are excluded (§3). `wb_dma_ch_cfg_s cfg =
 {0};` gives you zeros, not the model's defaults.
 
 This is deliberate rather than an omission: projecting *some* constraints would
@@ -201,7 +211,7 @@ Measured on the WISHBONE DMA model (20 functions, 4 channels), `-Os`,
 | | |
 |---|---|
 | `.text` | ~1.4 KB |
-| `sizeof(wb_dma_t)` | 248 bytes (64-bit addresses) |
+| `sizeof(wb_dma_c)` | 248 bytes (64-bit addresses) |
 | undefined symbols | `pssc_message`, `memset` |
 
 `memset` is required of a freestanding implementation (C99 §4), so it is not an

@@ -195,7 +195,7 @@ def test_the_generated_import_surface_compiles_and_links(tmp_path, cc):
         "void plat_delay_us(int us) { (void)us; }\n"
         "int plat_ticks(void) { return 42; }\n"
         "void pssc_message(const char *fmt, ...) { (void)fmt; }\n"
-        "int main(void) { imp_t o; imp_init(&o, 0); "
+        "int main(void) { imp_c o; imp_init(&o, 0); "
         "return imp_spin(&o, 1) == 42 ? 0 : 1; }\n")
     exe = tmp_path / "a.out"
     r = subprocess.run(
@@ -270,7 +270,7 @@ def test_the_platform_definition_beats_the_weak_stub(tmp_path, cc):
         "void plat_delay_us(int us) { (void)us; }\n"
         "int plat_ticks(void) { return 42; }\n"
         "void pssc_message(const char *fmt, ...) { (void)fmt; called = 1; }\n"
-        "int main(void) { imp_t o; imp_init(&o, 0);\n"
+        "int main(void) { imp_c o; imp_init(&o, 0);\n"
         "  if (imp_spin(&o, 1) != 42) return 1;\n"
         "  pssc_message(\"x\");\n"
         "  return called ? 0 : 2; }\n")
@@ -294,7 +294,7 @@ def test_the_stub_alone_completes_the_message_seam(tmp_path, cc):
         '#include "imp.h"\n'
         "void plat_delay_us(int us) { (void)us; }\n"
         "int plat_ticks(void) { return 42; }\n"
-        "int main(void) { imp_t o; imp_init(&o, 0);\n"
+        "int main(void) { imp_c o; imp_init(&o, 0);\n"
         "  return imp_spin(&o, 1) == 42 ? 0 : 1; }\n")
     exe = tmp_path / "a.out"
     r = subprocess.run(

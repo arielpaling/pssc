@@ -118,8 +118,14 @@ class COpModelBackend:
         from .lower_reg_model import accessor_map, value_structs_for
 
         self.model, self.settings = model, s
-        self.prefixes = Prefixes(model, s.prefix,
-                                 parse_prefix_map(list(s.prefix_map)))
+        from ...driver import CompileError
+        try:
+            self.prefixes = Prefixes(model, s.prefix,
+                                     parse_prefix_map(list(s.prefix_map)))
+        except ValueError as e:
+            # Two component types with one name is the MODEL's (or the
+            # command line's) error, so it is reported as a user error.
+            raise CompileError(str(e)) from None
         self.comps = model.comp_dtypes_root_first
         self.imports = model.imports
         self.emitter_cls = self.body_emitter_cls or _BodyEmitter
@@ -134,6 +140,11 @@ class COpModelBackend:
                                      if id(x) in api]
         self.impl_value_structs = [x for x in self.value_structs
                                    if id(x) not in api]
+        # Before any section is rendered, so that two rules producing one C
+        # name is the model's error with both sources named, not a
+        # conflicting-declaration error in the header (`c_names`).
+        from . import c_names
+        c_names.check(self, model, s)
         _log.info("c-progseq: prefixes: %s",
                   ", ".join(f"{getattr(c, 'name', '?')}->{self.prefixes[c]}"
                             for c in self.comps))
@@ -267,7 +278,8 @@ class COpModelBackend:
 
     @overridable(since='0.1', stability='stable')
     def emit_handles(self, model, s: CSettings) -> List[str]:
-        """The component handle structs (`<prefix>_t`) and their accessors.
+        """The component handle structs (named as the PSS types are) and
+        their accessors.
 
         Returns LINES. The struct an extension most often wants a member on --
         override, call `super()`, and splice. The MEMBERS are the model's:

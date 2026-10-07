@@ -36,7 +36,7 @@
 #define OM_TRACE_CAP    512
 #define OM_PENDING_POLLS 2           /* CSR reads before DONE appears */
 
-/* CHn_CSR bit positions, from the generated wb_dma_csr_t. Restated here rather
+/* CHn_CSR bit positions, from the generated wb_dma_csr_s. Restated here rather
  * than included, deliberately: if the RDL moves a bit, this mock keeps the old
  * position and the gate FAILS. A mock that imported the same header as the
  * driver would move with it and agree with a wrong driver forever. */

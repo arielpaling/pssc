@@ -46,9 +46,9 @@ static const pssc_mem_if BUS = {
         printf(__VA_ARGS__); printf("\n"); }                    \
 } while (0)
 
-static wb_dma_ch_cfg_t a_config(void)
+static wb_dma_ch_cfg_s a_config(void)
 {
-    wb_dma_ch_cfg_t c;
+    wb_dma_ch_cfg_s c;
     memset(&c, 0, sizeof(c));
     c.src            = 0x1000u;
     c.dst            = 0x2000u;
@@ -64,11 +64,11 @@ static wb_dma_ch_cfg_t a_config(void)
 
 /* A transfer on a channel that is NOT channel 0, so every offset below is
  * wrong-by-default if the tree's base arithmetic is wrong. */
-static void case_transfer_on_channel_2(wb_dma_t *dma)
+static void case_transfer_on_channel_2(wb_dma_c *dma)
 {
     const int CH = 2;
-    wb_dma_ch_cfg_t cfg = a_config();
-    wb_dma_status_t st;
+    wb_dma_ch_cfg_s cfg = a_config();
+    wb_dma_status_e st;
     unsigned n_csr_reads;
 
     om_init(&mock, BASE);
@@ -114,9 +114,9 @@ static void case_transfer_on_channel_2(wb_dma_t *dma)
 
 /* The same operation on every channel, so a base that is right for one and
  * wrong for the rest (a stride error rather than an offset error) is caught. */
-static void case_every_channel_is_distinct(wb_dma_t *dma)
+static void case_every_channel_is_distinct(wb_dma_c *dma)
 {
-    wb_dma_ch_cfg_t cfg = a_config();
+    wb_dma_ch_cfg_s cfg = a_config();
     int i;
 
     om_init(&mock, BASE);
@@ -136,11 +136,11 @@ static void case_every_channel_is_distinct(wb_dma_t *dma)
 
 /* stop_channel: an abort is reported as an ERROR, and it writes STOP to the
  * right channel. */
-static void case_stop_is_an_error(wb_dma_t *dma)
+static void case_stop_is_an_error(wb_dma_c *dma)
 {
     const int CH = 3;
-    wb_dma_ch_cfg_t cfg = a_config();
-    wb_dma_status_t st;
+    wb_dma_ch_cfg_s cfg = a_config();
+    wb_dma_status_e st;
 
     om_init(&mock, BASE);
     wb_dma_init(dma, &BUS, BASE);
@@ -157,7 +157,7 @@ static void case_stop_is_an_error(wb_dma_t *dma)
 
 /* The engine-global block is at the base itself, NOT at a channel bank -- the
  * other half of the address arithmetic. */
-static void case_engine_global_registers(wb_dma_t *dma)
+static void case_engine_global_registers(wb_dma_c *dma)
 {
     om_init(&mock, BASE);
     wb_dma_init(dma, &BUS, BASE);
@@ -174,7 +174,7 @@ static void case_engine_global_registers(wb_dma_t *dma)
 
 /* A masked write is a read-modify-write (§21.14.1): the read is still there,
  * and it happens BEFORE the write. */
-static void case_masked_write_reads_first(wb_dma_t *dma)
+static void case_masked_write_reads_first(wb_dma_c *dma)
 {
     const int CH = 1;
     uint64_t csr;
@@ -199,7 +199,7 @@ static void case_masked_write_reads_first(wb_dma_t *dma)
 
 int main(void)
 {
-    static wb_dma_t dma;
+    static wb_dma_c dma;
 
     case_transfer_on_channel_2(&dma);
     case_every_channel_is_distinct(&dma);

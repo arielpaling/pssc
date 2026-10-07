@@ -44,7 +44,7 @@ int main(void) {
     uint64_t base = (uint64_t)(uintptr_t)g_ram;
     int errors = 0, status;
 
-    wb_dma_t *dma = wb_dma_create(base);
+    dma_engine_c *dma = wb_dma_create(base);
 
     /* 1) configure_channel (no polling). */
     wb_dma_configure_channel(dma, 5, 7, 1, 1, 0);

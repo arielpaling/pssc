@@ -54,9 +54,9 @@ class CProgSeqTarget(OpModelTarget):
         parser.add_argument(
             "--prefix-map", dest="c_prefix_map", metavar="TYPE=PREFIX",
             action="append", default=[],
-            help="c-progseq: override one component type's symbol prefix. The "
-                 "escape hatch for two component types that collide after "
-                 "'_c'-stripping, which is otherwise a generation error",
+            help="c-progseq: rename one component type: its C type and its "
+                 "symbol prefix. The escape hatch for two component types "
+                 "whose names collide, which is otherwise a generation error",
         )
         parser.add_argument(
             "--link-style", dest="c_link_style",

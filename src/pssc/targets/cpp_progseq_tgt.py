@@ -40,7 +40,9 @@ class CppProgSeqTarget(OpModelTarget):
         super().add_args(parser)
         parser.add_argument(
             "--namespace", dest="cpp_namespace", metavar="NAME",
-            help="cpp-progseq: namespace + class prefix (default: root sans _c)",
+            help="cpp-progseq: namespace, and the stem of the import seam "
+                 "(<ns>_import_if) (default: root sans _c). Classes keep "
+                 "their PSS type names",
         )
         parser.add_argument(
             "--dispatch", dest="cpp_dispatch",

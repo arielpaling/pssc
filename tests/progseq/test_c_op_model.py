@@ -96,17 +96,17 @@ def test_outputs_written(gen):
 # --- C1.1: one struct per component, sub-components inline ------------------
 
 def test_each_component_gets_its_own_struct(h):
-    assert_c(h, has=["typedef struct wb_dma_ch_s {", "} wb_dma_ch_t;",
-                     "typedef struct wb_dma_s {", "} wb_dma_t;"])
+    assert_c(h, has=["typedef struct wb_dma_ch_c {", "} wb_dma_ch_c;",
+                     "typedef struct wb_dma_c {", "} wb_dma_c;"])
 
 
 def test_sub_components_are_inline_members_not_pointers(h):
     """BY VALUE. The PSS tree is static, so the C tree is: one caller-provided
     object covers every level and there is nothing to allocate below the root.
-    A `wb_dma_ch_t *ch[4]` would reintroduce exactly the allocator this style
+    A `wb_dma_ch_c *ch[4]` would reintroduce exactly the allocator this style
     exists to remove."""
-    assert_c(h, has=["    wb_dma_ch_t ch[4];"],
-             has_not=["wb_dma_ch_t *ch[4]", "wb_dma_ch_t **ch"])
+    assert_c(h, has=["    wb_dma_ch_c ch[4];"],
+             has_not=["wb_dma_ch_c *ch[4]", "wb_dma_ch_c **ch"])
 
 
 def test_the_child_struct_precedes_the_parent(h):
@@ -114,21 +114,21 @@ def test_the_child_struct_precedes_the_parent(h):
     the structs are emitted children-first. Getting this backwards produces
     `field has incomplete type`, which is at least loud -- but the order is also
     what makes `--header-only` work, where it is not."""
-    assert h.index("} wb_dma_ch_t;") < h.index("typedef struct wb_dma_s {")
+    assert h.index("} wb_dma_ch_c;") < h.index("typedef struct wb_dma_c {")
 
 
 def test_no_parent_back_pointer(h):
     """Design §4.1: verified against the model that nothing refers upward, so
     nothing stores a way to go up. An emitter that added one "just in case"
     would put a pointer into every one of the four channels."""
-    assert_c(h, has_not=["wb_dma_t *parent", "wb_dma_t *owner",
-                         "struct wb_dma_s *parent"])
+    assert_c(h, has_not=["wb_dma_c *parent", "wb_dma_c *owner",
+                         "struct wb_dma_c *parent"])
 
 
 def test_each_component_carries_its_own_bus(h):
     """A sub-component's register accessors call `pssc_bus(s)` with ITS handle.
     Reaching the root's copy instead would need the back-pointer above."""
-    ch = h[h.index("typedef struct wb_dma_ch_s {"):h.index("} wb_dma_ch_t;")]
+    ch = h[h.index("typedef struct wb_dma_ch_c {"):h.index("} wb_dma_ch_c;")]
     assert "const pssc_mem_if *bus;" in ch
     assert "pssc_addr_t base_regs;" in ch
 
@@ -136,16 +136,16 @@ def test_each_component_carries_its_own_bus(h):
 def test_component_data_members_are_present(h):
     """`chan` and `caps` are the channel's state; without them `self.caps.ars`
     in an operation body has nowhere to resolve to."""
-    ch = h[h.index("typedef struct wb_dma_ch_s {"):h.index("} wb_dma_ch_t;")]
+    ch = h[h.index("typedef struct wb_dma_ch_c {"):h.index("} wb_dma_ch_c;")]
     assert "int chan;" in ch
-    assert "wb_dma_ch_caps_t caps;" in ch
+    assert "wb_dma_ch_caps_s caps;" in ch
 
 
 # --- C1.2: sub-component accessors -----------------------------------------
 
 def test_sub_component_accessor_and_count(h):
     assert_c(h, has=["#define WB_DMA_CH_COUNT 4u",
-                     "static inline wb_dma_ch_t *wb_dma_ch(wb_dma_t *s, unsigned i) "
+                     "static inline wb_dma_ch_c *wb_dma_ch(wb_dma_c *s, unsigned i) "
                      "{ return &s->ch[i]; }"])
 
 
@@ -154,7 +154,7 @@ def test_the_count_is_the_models_number(h):
     fold and came through as -1 would make `WB_DMA_CH_COUNT` a negative loop
     bound -- which is why the array-size helper returns None rather than -1."""
     assert "#define WB_DMA_CH_COUNT 4u" in h
-    assert "wb_dma_ch_t ch[4];" in h
+    assert "wb_dma_ch_c ch[4];" in h
 
 
 # --- C1.3: prefixes come from the type name --------------------------------
@@ -168,7 +168,7 @@ def test_per_channel_operations_use_the_type_prefix(h):
                "set_auto_restart", "set_software_pointer", "wait_completion",
                "transfer_single_start", "transfer_list_start",
                "stop_channel_start", "wait_hint"):
-        assert f"wb_dma_ch_{op}(wb_dma_ch_t *s" in h, op
+        assert f"wb_dma_ch_{op}(wb_dma_ch_c *s" in h, op
     # ...and NOT under the root's prefix, which is what a generator that keyed
     # off the instance would have produced.
     assert_c(h, has_not=["wb_dma_transfer_single(", "wb_dma_ch0_transfer_single("])
@@ -184,7 +184,7 @@ def test_the_whole_per_channel_surface_is_present(h):
     as operations. The header's export API is exactly the callable surface,
     which is what this test is about anyway.
     """
-    assert h.count("wb_dma_ch_t *s);") + h.count("wb_dma_ch_t *s, ") == 13
+    assert h.count("wb_dma_ch_c *s);") + h.count("wb_dma_ch_c *s, ") == 13
 
 
 def test_prefix_collision_is_an_error():
@@ -217,8 +217,8 @@ def test_prefix_map_is_the_escape_hatch(gen, tmp_path_factory):
                             c_prefix_map=["wb_dma_ch_c=chan"])
     driver.compile(_sources(), target="op-model-c", opts=ns)
     h = (out / "wb_dma.h").read_text()
-    assert_c(h, has=["} chan_t;", "chan_transfer_single(chan_t *s"],
-             has_not=["} wb_dma_ch_t;"])
+    assert_c(h, has=["} chan;", "chan_transfer_single(chan *s"],
+             has_not=["} wb_dma_ch_c;"])
 
 
 # --- C1.4: register accessors are per owning component ----------------------
@@ -232,9 +232,9 @@ def test_channel_registers_are_reached_through_the_channel_handle(c):
     device through the operations rather than through them."""
     assert_c(c, has=[
         "PSSC_MAYBE_UNUSED static inline pssc_addr_t "
-        "wb_dma_ch_regs_csr_addr(const wb_dma_ch_t *s) "
+        "wb_dma_ch_regs_csr_addr(const wb_dma_ch_c *s) "
         "{ return s->base_regs + 0x0u; }",
-        "wb_dma_ch_regs_csr_write(wb_dma_ch_t *s, wb_dma_csr_t v)",
+        "wb_dma_ch_regs_csr_write(wb_dma_ch_c *s, wb_dma_csr_s v)",
     ])
 
 
@@ -245,7 +245,7 @@ def test_the_same_register_is_also_reachable_from_the_root(c):
     call site to break."""
     assert ("PSSC_MAYBE_UNUSED static inline pssc_addr_t "
             "wb_dma_regs_bank_csr_addr("
-            "const wb_dma_t *s, int i0) "
+            "const wb_dma_c *s, int i0) "
             "{ return s->base_regs + 0x20u + (pssc_addr_t)i0 * 0x20u; }") in c
 
 
@@ -259,8 +259,8 @@ def test_register_value_types_are_emitted_once(h, c):
     them: a struct that both halves claimed would be declared twice in one
     translation unit (the .c includes the .h), and counting either file alone
     could not see it."""
-    assert (h + c).count("} wb_dma_csr_t;") == 1
-    assert (h + c).count("} wb_dma_gcsr_t;") == 1
+    assert (h + c).count("} wb_dma_csr_s;") == 1
+    assert (h + c).count("} wb_dma_gcsr_s;") == 1
 
 
 def test_access_mode_is_honoured_per_register(c):
@@ -303,9 +303,9 @@ def test_capability_defaults_are_assigned(c):
 
 
 def test_create_and_destroy_are_root_only(h):
-    """A `wb_dma_ch_create()` would malloc a channel that no `wb_dma_t`
+    """A `wb_dma_ch_create()` would malloc a channel that no `wb_dma_c`
     contains: an allocation that compiles, runs, and is bound to nothing."""
-    assert_c(h, has=["wb_dma_t *wb_dma_create(", "void wb_dma_destroy("],
+    assert_c(h, has=["wb_dma_c *wb_dma_create(", "void wb_dma_destroy("],
              has_not=["wb_dma_ch_create(", "wb_dma_ch_destroy("])
 
 
@@ -332,9 +332,9 @@ def test_the_blocking_wait_is_absent_and_the_poll_is_present(c):
     What must NOT happen is the end-to-end layer disappearing with it: that was
     the pre-M0 behaviour, and it gave firmware and UVM two different APIs for
     one device."""
-    assert_c(c, has=["void wb_dma_ch_wait_hint(wb_dma_ch_t *s) {",
-                     "wb_dma_ch_wait_completion(wb_dma_ch_t *s)",
-                     "wb_dma_ch_transfer_single(wb_dma_ch_t *s"],
+    assert_c(c, has=["void wb_dma_ch_wait_hint(wb_dma_ch_c *s) {",
+                     "wb_dma_ch_wait_completion(wb_dma_ch_c *s)",
+                     "wb_dma_ch_transfer_single(wb_dma_ch_c *s"],
              has_not=["wb_dma_notify_irq", "pssc_chan1_get(", "wake.get"],
              code=True)
 
@@ -485,7 +485,7 @@ def test_static_lifecycle_still_has_the_whole_api(gen_static):
     operation is still there. A lifecycle knob that quietly shrank the operation
     surface would be indistinguishable from a broken tree walk."""
     h = (gen_static / "wb_dma.h").read_text()
-    assert_c(h, has=["void wb_dma_init(wb_dma_t *self, const pssc_mem_if *bus,"
+    assert_c(h, has=["void wb_dma_init(wb_dma_c *self, const pssc_mem_if *bus,"
                      " pssc_addr_t base);",
                      "void wb_dma_ch_init(",
                      "wb_dma_ch_transfer_single_start(",
@@ -495,13 +495,13 @@ def test_static_lifecycle_still_has_the_whole_api(gen_static):
 
 
 def test_the_struct_is_complete_not_opaque(gen_static):
-    """C2.3. `static wb_dma_t dma;` needs the size, so the layout is in the
+    """C2.3. `static wb_dma_c dma;` needs the size, so the layout is in the
     header -- which makes it an ABI. Stated in the banner rather than left for a
     firmware author to discover by shipping a stale object file."""
     h = (gen_static / "wb_dma.h").read_text()
-    assert_c(h, has=["} wb_dma_t;", "wb_dma_ch_t ch[4];",
+    assert_c(h, has=["} wb_dma_c;", "wb_dma_ch_c ch[4];",
                      "Component structs are COMPLETE types"],
-             has_not=["typedef struct wb_dma_s wb_dma_t;"])
+             has_not=["typedef struct wb_dma_c wb_dma_c;"])
 
 
 def test_the_isr_boundary_is_stated_in_the_generated_header(h):

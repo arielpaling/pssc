@@ -26,42 +26,42 @@ typedef union { uint32_t raw; struct {
     uint32_t int_done     :  1;   /* [21] sw=r hw=w reset=0x0 dropped: onread=rclr, intr, enable */
     uint32_t int_chk_done :  1;   /* [22] sw=r hw=w reset=0x0 dropped: onread=rclr, intr, enable */
     uint32_t rsvd_23      :  9;   /* [31:23] reserved */
-}; } wb_dma_csr_t;
+}; } wb_dma_csr_s;
 typedef union { uint32_t raw; struct {
     uint32_t tot_sz       : 12;   /* [11:0] sw=rw hw=r */
     uint32_t rsvd_12      :  4;   /* [15:12] reserved */
     uint32_t chk_sz       :  9;   /* [24:16] sw=rw hw=r */
     uint32_t rsvd_25      :  7;   /* [31:25] reserved */
-}; } wb_dma_sz_t;
+}; } wb_dma_sz_s;
 typedef union { uint32_t raw; struct {
     uint32_t addr         : 32;   /* [31:0] sw=rw hw=r */
-}; } wb_dma_addr_t;
+}; } wb_dma_addr_s;
 typedef union { uint32_t raw; struct {
     uint32_t mask         : 32;   /* [31:0] sw=rw hw=r reset=0xfffffffc */
-}; } wb_dma_amask_t;
+}; } wb_dma_amask_s;
 typedef union { uint32_t raw; struct {
     uint32_t ptr          : 32;   /* [31:0] sw=rw hw=rw */
-}; } wb_dma_descptr_t;
+}; } wb_dma_descptr_s;
 typedef union { uint32_t raw; struct {
     uint32_t ptr          : 31;   /* [30:0] sw=rw hw=r reset=0x0 */
     uint32_t en           :  1;   /* [31] sw=rw hw=r reset=0x0 */
-}; } wb_dma_swptr_t;
+}; } wb_dma_swptr_s;
 typedef union { uint32_t raw; struct {
     uint32_t pause        :  1;   /* [0] sw=rw hw=r reset=0x0 */
     uint32_t rsvd_1       : 31;   /* [31:1] reserved */
-}; } wb_dma_gcsr_t;
+}; } wb_dma_gcsr_s;
 typedef union { uint32_t raw; struct {
     uint32_t ch           : 31;   /* [30:0] sw=rw hw=r reset=0x0 */
     uint32_t rsvd_31      :  1;   /* [31] reserved */
-}; } wb_dma_intmsk_t;
+}; } wb_dma_intmsk_s;
 typedef union { uint32_t raw; struct {
     uint32_t ch           : 31;   /* [30:0] sw=r hw=w reset=0x0 */
     uint32_t rsvd_31      :  1;   /* [31] reserved */
-}; } wb_dma_intsrc_t;
+}; } wb_dma_intsrc_s;
 
 /* ----- Component lifecycle + operations. ----- */
 /* --- wb_dma_ch_c --- */
-void wb_dma_ch_init(wb_dma_ch_t *self, int id, pssc_addr_t bank) {
+void wb_dma_ch_init(wb_dma_ch_c *self, int id, pssc_addr_t bank) {
     pssc_chan1_init(&self->inflight);
     pssc_chan1_init(&self->wake);
     self->caps.present = 1;
@@ -69,7 +69,7 @@ void wb_dma_ch_init(wb_dma_ch_t *self, int id, pssc_addr_t bank) {
     self->caps.ed = 1;
     self->caps.cbuf = 1;
     self->chan = id;
-    (self->base_regs = bank, self->regs = (wb_dma_ch_regs_t *)(uintptr_t)self->base_regs);
+    (self->base_regs = bank, self->regs = (wb_dma_ch_regs_c *)(uintptr_t)self->base_regs);
 }
 
 /*
@@ -129,8 +129,8 @@ void wb_dma_ch_init(wb_dma_ch_t *self, int id, pssc_addr_t bank) {
  *    spins -- the routing requirement belongs to the wait primitive, not to
  *    this operation.
  */
-wb_dma_status_t wb_dma_ch_wait_completion(wb_dma_ch_t *s) {
-    wb_dma_status_t status;
+wb_dma_status_e wb_dma_ch_wait_completion(wb_dma_ch_c *s) {
+    wb_dma_status_e status;
     uint64_t tok;   /* PSS: uint8_t -- widened: channel try_get output */
     while (1) {
         status = wb_dma_ch_probe_status(s);
@@ -175,7 +175,7 @@ wb_dma_status_t wb_dma_ch_wait_completion(wb_dma_ch_t *s) {
  *
  * :param cfg: what to program before arming
  */
-wb_dma_status_t wb_dma_ch_transfer_single(wb_dma_ch_t *s, wb_dma_ch_cfg_t cfg) {
+wb_dma_status_e wb_dma_ch_transfer_single(wb_dma_ch_c *s, wb_dma_ch_cfg_s cfg) {
     wb_dma_ch_transfer_single_start(s, cfg);
     return wb_dma_ch_wait_completion(s);
 }
@@ -202,7 +202,7 @@ wb_dma_status_t wb_dma_ch_transfer_single(wb_dma_ch_t *s, wb_dma_ch_cfg_t cfg) {
  * :param head: head of the descriptor chain, as returned when the list was
  *              built; must be reachable from interface 0
  */
-wb_dma_status_t wb_dma_ch_transfer_list(wb_dma_ch_t *s, pssc_addr_t head) {
+wb_dma_status_e wb_dma_ch_transfer_list(wb_dma_ch_c *s, pssc_addr_t head) {
     wb_dma_ch_transfer_list_start(s, head);
     return wb_dma_ch_wait_completion(s);
 }
@@ -232,8 +232,8 @@ wb_dma_status_t wb_dma_ch_transfer_list(wb_dma_ch_t *s, pssc_addr_t head) {
  * See ``stop_channel_start()`` for what that sharing costs -- which read
  * consumes the ERR is not determined by this model -- and for open item §6.5.
  */
-wb_dma_status_t wb_dma_ch_stop_channel(wb_dma_ch_t *s) {
-    wb_dma_status_t status;
+wb_dma_status_e wb_dma_ch_stop_channel(wb_dma_ch_c *s) {
+    wb_dma_status_e status;
     wb_dma_ch_stop_channel_start(s);
     /* wait_completion()'s loop, minus the guard release. See above. */
     while (1) {
@@ -295,8 +295,8 @@ wb_dma_status_t wb_dma_ch_stop_channel(wb_dma_ch_t *s) {
  *    PENDING instead, because the state needed for an honest answer was
  *    consumed by whoever broke the rule.
  */
-wb_dma_status_t wb_dma_ch_check_completion(wb_dma_ch_t *s) {
-    wb_dma_status_t status;
+wb_dma_status_e wb_dma_ch_check_completion(wb_dma_ch_c *s) {
+    wb_dma_status_e status;
     uint64_t tok;   /* PSS: uint8_t -- widened: channel try_get output */
     if (!(pssc_chan1_try_get(&s->inflight, &tok))) {
         pssc_message("wb_dma: check_completion() with no operation in progress on this channel -- either no *_start() was called, or a previous completion was already consumed");
@@ -333,9 +333,9 @@ wb_dma_status_t wb_dma_ch_check_completion(wb_dma_ch_t *s) {
  * :param cfg: what to program; capability-gated fields are skipped when the
  *             channel was built without the capability
  */
-void wb_dma_ch_configure_channel(wb_dma_ch_t *s, wb_dma_ch_cfg_t cfg) {
-    wb_dma_sz_t sz = {0};
-    wb_dma_csr_t csr = {0};
+void wb_dma_ch_configure_channel(wb_dma_ch_c *s, wb_dma_ch_cfg_s cfg) {
+    wb_dma_sz_s sz = {0};
+    wb_dma_csr_s csr = {0};
     write32(&s->regs->adr0, cfg.src);
     write32(&s->regs->am0, cfg.src_mask);
     write32(&s->regs->adr1, cfg.dst);
@@ -401,9 +401,9 @@ void wb_dma_ch_configure_channel(wb_dma_ch_t *s, wb_dma_ch_cfg_t cfg) {
  *    past the guard opts out of the only detector for the read-to-clear
  *    hazard, and the read is a side effect every time.
  */
-wb_dma_status_t wb_dma_ch_probe_status(wb_dma_ch_t *s) {
-    wb_dma_csr_t csr = {0};
-    csr = (wb_dma_csr_t){ .raw = read32(&s->regs->csr) };
+wb_dma_status_e wb_dma_ch_probe_status(wb_dma_ch_c *s) {
+    wb_dma_csr_s csr = {0};
+    csr = (wb_dma_csr_s){ .raw = read32(&s->regs->csr) };
     if (csr.err == 1) {
         return 1;
     }
@@ -437,7 +437,7 @@ wb_dma_status_t wb_dma_ch_probe_status(wb_dma_ch_t *s) {
  * :param enable: 1 to auto-restart on completion, 0 to stop after the
  *                current iteration
  */
-void wb_dma_ch_set_auto_restart(wb_dma_ch_t *s, uint8_t enable) {
+void wb_dma_ch_set_auto_restart(wb_dma_ch_c *s, uint8_t enable) {
     /*
      * Silently ignored by hardware without ARS, so decline rather than
      * pretend.
@@ -470,8 +470,8 @@ void wb_dma_ch_set_auto_restart(wb_dma_ch_t *s, uint8_t enable) {
  * :param ptr:    the new software pointer
  * :param enable: whether the pointer is honoured at all
  */
-void wb_dma_ch_set_software_pointer(wb_dma_ch_t *s, uint32_t ptr, uint8_t enable) {
-    wb_dma_swptr_t sw = {0};
+void wb_dma_ch_set_software_pointer(wb_dma_ch_c *s, uint32_t ptr, uint8_t enable) {
+    wb_dma_swptr_s sw = {0};
     if (!(s->caps.cbuf)) {
         return;
     }
@@ -528,7 +528,7 @@ void wb_dma_ch_set_software_pointer(wb_dma_ch_t *s, uint32_t ptr, uint8_t enable
  *    the current WISHBONE cycle retires? That decides whether an abort can
  *    be considered delivered on return, which matters post-silicon.
  */
-void wb_dma_ch_stop_channel_start(wb_dma_ch_t *s) {
+void wb_dma_ch_stop_channel_start(wb_dma_ch_c *s) {
     write32(&s->regs->csr, (read32(&s->regs->csr) & ~(512)) | ((512) & (512)));
 }
 
@@ -562,7 +562,7 @@ void wb_dma_ch_stop_channel_start(wb_dma_ch_t *s) {
  * :param head: head of the descriptor chain; must be reachable from
  *              interface 0
  */
-void wb_dma_ch_transfer_list_start(wb_dma_ch_t *s, pssc_addr_t head) {
+void wb_dma_ch_transfer_list_start(wb_dma_ch_c *s, pssc_addr_t head) {
     /* Checked before claiming, so a declined start leaves no token behind. */
     if (!(s->caps.ed)) {
         pssc_message("wb_dma: transfer_list_start() on a channel built without external-descriptor support (caps.ed)");
@@ -623,7 +623,7 @@ void wb_dma_ch_transfer_list_start(wb_dma_ch_t *s, pssc_addr_t head) {
  *
  * :param cfg: what to program before arming
  */
-void wb_dma_ch_transfer_single_start(wb_dma_ch_t *s, wb_dma_ch_cfg_t cfg) {
+void wb_dma_ch_transfer_single_start(wb_dma_ch_c *s, wb_dma_ch_cfg_s cfg) {
     if (!(pssc_chan1_try_put(&s->inflight, 1))) {
         pssc_message("wb_dma: transfer_single_start() on a channel that already has an operation in progress");
         return;
@@ -676,7 +676,7 @@ void wb_dma_ch_transfer_single_start(wb_dma_ch_t *s, wb_dma_ch_cfg_t cfg) {
  *    would deadlock the one caller that has no interrupt to wait for. The
  *    contract is stated in full in ``docs/op-model-export-design.md`` §4.4.
  */
-void wb_dma_ch_wait_hint(wb_dma_ch_t *s) {
+void wb_dma_ch_wait_hint(wb_dma_ch_c *s) {
     (void)s;
     /*
      * No event to wait on, so spin. The caller re-reads CHn_CSR on every
@@ -687,20 +687,20 @@ void wb_dma_ch_wait_hint(wb_dma_ch_t *s) {
 }
 
 /* --- wb_dma_c --- */
-void wb_dma_init(wb_dma_t *self, pssc_addr_t base) {
+void wb_dma_init(wb_dma_c *self, pssc_addr_t base) {
     self->num_ch = 4;
     self->pri_levels = 4;
-    (self->base_regs = base, self->regs = (wb_dma_regs_t *)(uintptr_t)self->base_regs);
+    (self->base_regs = base, self->regs = (wb_dma_regs_c *)(uintptr_t)self->base_regs);
     for (unsigned i = 0; i < 4u; i++) {
         wb_dma_ch_init(&self->ch[i], i, (base + (0x20u + 0x20u * i)));
     }
 }
-wb_dma_t *wb_dma_create(pssc_addr_t base) {
-    wb_dma_t *self = (wb_dma_t *)malloc(sizeof(wb_dma_t));
+wb_dma_c *wb_dma_create(pssc_addr_t base) {
+    wb_dma_c *self = (wb_dma_c *)malloc(sizeof(wb_dma_c));
     if (self) wb_dma_init(self, base);
     return self;
 }
-void wb_dma_destroy(wb_dma_t *self) { free(self); }
+void wb_dma_destroy(wb_dma_c *self) { free(self); }
 
 /*
  * Route a set of channels to one of the two aggregate interrupt outputs.
@@ -723,8 +723,8 @@ void wb_dma_destroy(wb_dma_t *self) { free(self); }
  * :param bank:         which aggregate output to program
  * :param channel_mask: bit N routes channel N
  */
-void wb_dma_configure_interrupt_routing(wb_dma_t *s, wb_dma_int_bank_t bank, uint32_t channel_mask) {
-    wb_dma_intmsk_t vec = {0};
+void wb_dma_configure_interrupt_routing(wb_dma_c *s, wb_dma_int_bank_e bank, uint32_t channel_mask) {
+    wb_dma_intmsk_s vec = {0};
     vec.ch = channel_mask;
     switch (bank) {
     case 0:
@@ -759,12 +759,12 @@ void wb_dma_configure_interrupt_routing(wb_dma_t *s, wb_dma_int_bank_t bank, uin
  *
  * :param pause: 1 to pause, 0 to resume
  */
-void wb_dma_pause_engine(wb_dma_t *s, uint8_t pause) {
-    wb_dma_gcsr_t gcsr = {0};
+void wb_dma_pause_engine(wb_dma_c *s, uint8_t pause) {
+    wb_dma_gcsr_s gcsr = {0};
     gcsr.pause = pause;
     write32(&s->regs->csr, (gcsr).raw);
     while (1) {
-        gcsr = (wb_dma_gcsr_t){ .raw = read32(&s->regs->csr) };
+        gcsr = (wb_dma_gcsr_s){ .raw = read32(&s->regs->csr) };
         if (gcsr.pause == pause) {
             break;
         }
@@ -791,7 +791,7 @@ void wb_dma_pause_engine(wb_dma_t *s, uint8_t pause) {
  *
  * :param desc_ptr: the descriptor whose control word is read back
  */
-uint16_t wb_dma_read_descriptor_residual(wb_dma_t *s, pssc_addr_t desc_ptr) {
+uint16_t wb_dma_read_descriptor_residual(wb_dma_c *s, pssc_addr_t desc_ptr) {
     (void)s;
     uint32_t desc_csr;
     desc_csr = read32((volatile void *)(uintptr_t)(desc_ptr));
@@ -820,9 +820,9 @@ uint16_t wb_dma_read_descriptor_residual(wb_dma_t *s, pssc_addr_t desc_ptr) {
  * :param prev: the descriptor to link from; null/zero means "head of list"
  * :param desc: the descriptor contents; the caller's copy is not modified
  */
-pssc_addr_t wb_dma_write_descriptor(wb_dma_t *s, pssc_addr_t at, pssc_addr_t prev, wb_dma_desc_t desc) {
+pssc_addr_t wb_dma_write_descriptor(wb_dma_c *s, pssc_addr_t at, pssc_addr_t prev, wb_dma_desc_s desc) {
     (void)s;
-    wb_dma_desc_t d = {0};
+    wb_dma_desc_s d = {0};
     uint32_t csr_word;
     /*
      * Deep copy: `desc` is the caller's struct (aggregates pass by handle)

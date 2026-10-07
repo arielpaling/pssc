@@ -292,15 +292,15 @@ def test_enum_typedef_with_explicit_values(tmp_path):
     """
     hdr, _, _ = _generate(tmp_path, _MATCH)
     assert_c(hdr, has=["typedef enum {", "RED = 0", "GREEN = 1", "BLUE = 7",
-                       "} colour_t;"])
+                       "} colour_e;"])
 
 
 def test_enum_typed_argument_is_the_enum_type(tmp_path):
     """The blocker `src/pss/flow.yaml` recorded verbatim: the first enum-typed
     operation argument raised `unsupported C type for DataTypeEnum`."""
     hdr, _, _ = _generate(tmp_path, _MATCH)
-    assert_c(hdr, has=["probe_f(probe_t *s, colour_t c)"],
-             has_not=["probe_f(probe_t *s, int c)"])
+    assert_c(hdr, has=["probe_f(probe_c *s, colour_e c)"],
+             has_not=["probe_f(probe_c *s, int c)"])
 
 
 # --- C0.7: built-in calls ---------------------------------------------------

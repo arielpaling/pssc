@@ -56,9 +56,11 @@ def _strip_pkg(name: Optional[str]) -> str:
 
 
 def c_struct_name(struct_dtype) -> str:
-    """C value-type name for a register value struct: ``dma_csr_s`` -> ``dma_csr_t``."""
-    n = _strip_pkg(struct_dtype.name)
-    return (n[:-2] + "_t") if n.endswith("_s") else (n + "_t")
+    """C name of a PSS struct: its PSS name, ``dma_csr_s`` -> ``dma_csr_s``.
+
+    Not respelled. PSS keeps a struct, an enum and a component distinct;
+    rewriting each suffix to `_t` made `x_s`, `x_e` and `x_c` one C name."""
+    return _strip_pkg(struct_dtype.name)
 
 
 def _struct_total_bits(struct_dtype) -> int:
@@ -234,6 +236,22 @@ def _addr_expr(acc: _Acc) -> str:
     return " + ".join(terms)
 
 
+def accessor_kinds(acc: _Acc, addr_only: bool = False) -> List[str]:
+    """The accessors :func:`emit_accessor` defines for ``acc``, as the kinds
+    `MemAccess.accessor` names. One answer, so that what is checked for a
+    name collision (`c_names`) is what is emitted."""
+    if addr_only:
+        return ["addr"]
+    kinds = ["addr"]
+    if acc.access != "WRITEONLY":
+        kinds += ["read", "read_val"]
+    if acc.access != "READONLY":
+        kinds += ["write", "write_val"]
+    if acc.access not in ("READONLY", "WRITEONLY"):
+        kinds.append("write_val_masked")
+    return kinds
+
+
 def emit_accessor(acc: _Acc, prefix_t: str, mem: MemAccess = None,
                   addr_only: bool = False) -> str:
     """The accessor set for one register.
@@ -251,14 +269,13 @@ def emit_accessor(acc: _Acc, prefix_t: str, mem: MemAccess = None,
     idx_p = _idx_params(n, leading_comma=True)
     idx_a = _idx_args(n)
     fn = lambda kind: mem.accessor(acc.base, kind)   # noqa: E731
+    kinds = accessor_kinds(acc, addr_only)
     addr = f"{fn('addr')}(s{idx_a})"
     lines = [
         f"{_SI} pssc_addr_t {fn('addr')}(const {prefix_t} *s{idx_p}) "
         f"{{ return {_addr_expr(acc)}; }}",
     ]
-    if addr_only:
-        return "\n".join(lines)
-    if acc.access != "WRITEONLY":
+    if "read" in kinds:
         read = mem.read(acc.prim, "s", addr)
         if acc.is_struct:
             lines.append(
@@ -268,7 +285,7 @@ def emit_accessor(acc: _Acc, prefix_t: str, mem: MemAccess = None,
             lines.append(
                 f"{_SI} {acc.c_type} {fn('read')}({prefix_t} *s{idx_p}) "
                 f"{{ return {read}; }}")
-    if acc.access != "READONLY":
+    if "write" in kinds:
         raw = "v.raw" if acc.is_struct else "v"
         lines.append(
             f"{_SI} void {fn('write')}({prefix_t} *s{idx_p}, {acc.c_type} v) "
@@ -280,11 +297,11 @@ def emit_accessor(acc: _Acc, prefix_t: str, mem: MemAccess = None,
     # `_write`; emitted anyway so the call site never has to ask which kind of
     # register it is holding.
     ut = f"uint{acc.prim}_t"
-    if acc.access != "WRITEONLY":
+    if "read_val" in kinds:
         lines.append(
             f"{_SI} {ut} {fn('read_val')}({prefix_t} *s{idx_p}) "
             f"{{ return {mem.read(acc.prim, 's', addr)}; }}")
-    if acc.access != "READONLY":
+    if "write_val" in kinds:
         lines.append(
             f"{_SI} void {fn('write_val')}({prefix_t} *s{idx_p}, {ut} v) "
             f"{{ {mem.write(acc.prim, 's', addr, 'v')}; }}")
@@ -302,7 +319,7 @@ def emit_accessor(acc: _Acc, prefix_t: str, mem: MemAccess = None,
     # The compiler folds write_field / write_fields / write_masked to a
     # (mask, val) constant pair before reaching here, so one accessor serves all
     # four spellings and no field name is involved.
-    if acc.access not in ("READONLY", "WRITEONLY"):
+    if "write_val_masked" in kinds:
         lines.append(
             f"{_SI} void {fn('write_val_masked')}({prefix_t} *s{idx_p}, "
             f"{ut} mask, {ut} val) "
@@ -334,7 +351,8 @@ def lower_accessors(comps, prefixes, *, link_style: str = "vtable",
     for comp in comps:
         prefix = prefixes[comp]
         for a in _collect_accessors(comp, prefix, style):
-            parts.append(emit_accessor(a, style.type_name(prefix), mem,
+            comp_t = style.type_name(prefixes.type_name(comp))
+            parts.append(emit_accessor(a, comp_t, mem,
                                        addr_only))
     return "\n".join(parts)
 
@@ -365,7 +383,7 @@ def accessor_map(comps, prefixes, style=None):
 # map and leaves the code proportional to the registers actually used.
 
 def map_type_name(group_dtype, style=None) -> str:
-    """C type for a register group's layout: ``wb_dma_regs_c`` -> ``wb_dma_regs_t``.
+    """C type for a register group's layout: its PSS name, ``wb_dma_regs_c``.
 
     Derived from the GROUP's type name and not from the component's prefix,
     because one group is commonly reached through two components -- WB DMA's
@@ -373,10 +391,7 @@ def map_type_name(group_dtype, style=None) -> str:
     Naming it per component would declare the same layout twice under two names,
     and the two would be the same bytes until the day someone edited one.
     """
-    n = _strip_pkg(getattr(group_dtype, "name", None) or "regs")
-    if n.endswith("_c"):
-        n = n[:-2]
-    return f"{n}_t"
+    return _strip_pkg(getattr(group_dtype, "name", None) or "regs")
 
 
 def _member_c_type(m, style=None) -> str:

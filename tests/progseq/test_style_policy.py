@@ -62,8 +62,8 @@ def test_the_default_policy_is_what_the_backend_uses_unasked():
     ("stubs_name", ("wb_dma",), "wb_dma_stubs.c"),
     ("include_guard", ("wb_dma",), "WB_DMA_H"),
     ("symbol", ("wb_dma", "start"), "wb_dma_start"),
-    ("type_name", ("wb_dma",), "wb_dma_t"),
-    ("struct_tag", ("wb_dma",), "wb_dma_s"),
+    ("type_name", ("wb_dma_c",), "wb_dma_c"),
+    ("struct_tag", ("wb_dma_c",), "wb_dma_c"),
     ("macro", ("wb_dma", "ch_COUNT"), "WB_DMA_CH_COUNT"),
 ])
 def test_the_default_spellings_are_pinned(method, args, expected):
@@ -98,11 +98,11 @@ class _ShoutySymbols(CStylePolicy):
     def reg_symbol(self, comp_prefix, path, reg):
         return "_".join(["ACME", comp_prefix] + list(path) + [reg])
 
-    def type_name(self, comp_prefix):
-        return f"ACME_{comp_prefix}_handle"
+    def type_name(self, type_name):
+        return f"ACME_{type_name}_handle"
 
-    def struct_tag(self, comp_prefix):
-        return f"ACME_{comp_prefix}_struct"
+    def struct_tag(self, type_name):
+        return f"ACME_{type_name}_struct"
 
 
 def test_a_symbol_policy_reaches_prototypes_and_call_sites(registered_style):
@@ -117,8 +117,8 @@ def test_a_symbol_policy_reaches_prototypes_and_call_sites(registered_style):
     text = _c_output(c_style="shouty")
 
     assert "ACME_dma_engine__mem_to_mem_copy(" in text
-    assert "ACME_dma_engine_handle" in text
-    assert "ACME_dma_engine_struct" in text
+    assert "ACME_dma_engine_c_handle" in text
+    assert "ACME_dma_engine_c_struct" in text
 
     assert "ACME_dma_engine_regs_channels_CSR_write(" in text
 

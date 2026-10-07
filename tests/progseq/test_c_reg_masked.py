@@ -73,7 +73,7 @@ def test_c_emits_the_masked_accessor(tmp_path):
     # In the .c: an accessor is implementation, and the masked form is the
     # accessor set's most implementation-ish member -- it exists to spell one
     # PSS statement, not to be called by hand.
-    assert "pss_top_regs_csr_write_masked(pss_top_t *s, uint32_t mask, uint32_t val)" in body
+    assert "pss_top_regs_csr_write_masked(pss_top *s, uint32_t mask, uint32_t val)" in body
     assert "pss_top_regs_csr_write_masked(s, 1, 1);" in body
     assert "pss_top_regs_csr_write_masked(s, 14, 10);" in body   # prio=5 -> [3:1]
 

@@ -161,11 +161,11 @@ Per-target options (contributed by each target's `add_args`):
 | *(all op-model)* | `--root COMP` | root component (shared by `op-model-sv` / `-c` / `-cpp` / `-py`) |
 | *(all op-model)* | `--no-core-copy` | do not copy the core seam header(s)/package |
 | *(all op-model)* | `--emit-manifest FILE` | also write the elaborated model as JSON — operations and signatures, register offsets, produced files and their roles. So a consumer never has to parse generated code |
-| `op-model-c` | `--prefix NAME` | symbol/file prefix (default root sans `_c`) |
+| `op-model-c` | `--prefix NAME` | symbol/file prefix (default root sans `_c`); types keep their PSS names |
 | `op-model-c` | `--link-style {vtable,direct,mmio}` | memory-access seam (default `vtable`) |
 | `op-model-c` | `--reg-style {bitfields,accessors}` | register value layout (default `bitfields`) |
 | `op-model-c` | `--header-only` | emit a single `.h` (forced for `mmio`) |
-| `op-model-cpp` | `--namespace NAME` | namespace + class prefix (default root sans `_c`) |
+| `op-model-cpp` | `--namespace NAME` | namespace and `<ns>_import_if` (default root sans `_c`); classes keep their PSS names |
 | `op-model-cpp` | `--dispatch {virtual,template}` | dispatch model (default `virtual`) |
 | `op-model-py` | `--py-module NAME` | generated module name (default root sans `_c`) |
 | `op-model-py` | `--py-await {sync,async}` | API form (default `sync`); `async` also publishes `HAVE_EVENT_WAIT=true` |

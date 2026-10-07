@@ -198,7 +198,7 @@ def test_cpp_lowers_a_depth_1_channel(tmp_path):
     assert "this->ch_[i].wake.try_put(1)" in h
     # ...which is legal only because the child names its parent a friend:
     # PSS component state is reachable along the hierarchy.
-    assert "friend class chan_top;" in h
+    assert "friend class chan_top_c;" in h
     # The runtime is copied in beside the generated header, and ONLY because
     # the model has a channel -- an unused header reads as a dependency the
     # platform has to satisfy.
@@ -239,7 +239,7 @@ def test_cpp_compiles_its_channel_lowering(tmp_path):
     main.write_text(
         '#include "chan_top.hpp"\n'
         'int main() { pssc::mmio_mem m; '
-        'auto t = chan_top::chan_top::create(m); t->notify(); return 0; }\n')
+        'auto t = chan_top::chan_top_c::create(m); t->notify(); return 0; }\n')
     res = subprocess.run(
         [available_cpp_compilers()[0], "-std=c++17", "-Wall", "-Wextra",
          "-Werror", "-c", str(main), "-I", str(out), "-o", str(out / "main.o")],

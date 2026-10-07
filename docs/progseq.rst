@@ -227,7 +227,9 @@ C backend (``op-model-c``)
 
 The ``op-model-c`` target emits the same programming API in C: register value
 **unions** (anonymous-union bitfields, so ``csr.FIELD`` works), zero-overhead
-**baked inline accessors**, and free functions over an opaque ``<prefix>_t``.
+**baked inline accessors**, and free functions over a handle struct named as
+the PSS component type is (``dma_engine_c``); structs and enums keep their PSS
+names too.
 Bodies keep native value-returning reads, native ``return``, and native
 ``do...while`` — closer to the PSS source than the SV output.
 
@@ -339,7 +341,7 @@ single self-contained ``.h``; forced for ``mmio``). Output is ``<prefix>.h``
 Construct and call (vtable)::
 
    pssc_mem_if bus = { ..., .ctx = &my_state };
-   wb_dma_t *dma = wb_dma_create(&bus, 0x40000000u);
+   dma_engine_c *dma = wb_dma_create(&bus, 0x40000000u);
    int st = wb_dma_mem_to_mem_copy(dma, 5, src, dst, 4096);
    wb_dma_destroy(dma);
 
@@ -402,8 +404,8 @@ back the interface. It has to work this way: a parent computes its children's
 base addresses in its own constructor body, which runs after the children — as
 members — already exist.
 
-Options: ``--namespace NAME`` (namespace + class prefix; default root sans
-``_c``), ``--dispatch {virtual,template}`` (``virtual`` default; the
+Classes keep their PSS type names. Options: ``--namespace NAME`` (the
+namespace and the ``<ns>_import_if`` seam; default root sans ``_c``), ``--dispatch {virtual,template}`` (``virtual`` default; the
 zero-overhead ``template`` model is planned), and the shared ``--yield``,
 ``--match-default``, ``--message-style`` and ``--prefix-map``, which mean here
 what they mean for ``op-model-c``. A stock ``pssc::mmio_mem`` seam ships for

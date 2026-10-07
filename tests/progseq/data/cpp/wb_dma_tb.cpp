@@ -71,13 +71,13 @@ static pssc::addr_t chbase(pssc::addr_t base, int ch) { return base + 0x20u + ps
 int main() {
     pssc::addr_t base = 0x40000000u;
     dma_mock_bus bus(base);
-    auto dma = wb_dma::wb_dma::create(bus, base);
+    auto dma = wb_dma::dma_engine_c::create(bus, base);
     int errors = 0, status;
 
     // 1) configure_channel
     dma->configure_channel(5, 7, true, true, false);
     {
-        wb_dma::dma_ch_csr_t csr; csr.raw = bus.rdword(chbase(base, 5));
+        wb_dma::dma_ch_csr_s csr; csr.raw = bus.rdword(chbase(base, 5));
         if (csr.PRIORITY != 7 || csr.MODE != 1 || csr.SRC_SEL != 1 || csr.DST_SEL != 0) {
             std::printf("  FAIL configure_channel fields: csr=0x%08x\n", csr.raw); errors++;
         }
@@ -94,7 +94,7 @@ int main() {
         }
     {
         pssc::addr_t cb = chbase(base, 3);
-        wb_dma::dma_ch_sz_t sz; sz.raw = bus.rdword(cb + 0x04u);
+        wb_dma::dma_ch_sz_s sz; sz.raw = bus.rdword(cb + 0x04u);
         if (bus.rdword(cb + 0x08u) != 0x10000000u) { std::printf("  FAIL A0\n"); errors++; }
         if (bus.rdword(cb + 0x10u) != 0x20000000u) { std::printf("  FAIL A1\n"); errors++; }
         if (sz.TOT_SZ != 4) { std::printf("  FAIL TOT_SZ=%u\n", sz.TOT_SZ); errors++; }
@@ -114,7 +114,7 @@ int main() {
     if (status != 0) { std::printf("  FAIL desc status=%d\n", status); errors++; }
     {
         pssc::addr_t cb = chbase(base, 9);
-        wb_dma::dma_ch_csr_t csr; csr.raw = bus.rdword(cb);
+        wb_dma::dma_ch_csr_s csr; csr.raw = bus.rdword(cb);
         if (bus.rdword(cb + 0x18u) != 0x50000000u) { std::printf("  FAIL DESC\n"); errors++; }
         if (csr.USE_ED != 1) { std::printf("  FAIL USE_ED not set\n"); errors++; }
     }

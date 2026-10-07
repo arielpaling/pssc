@@ -4,7 +4,7 @@ A backend has two kinds of decision in it. What the generated code MEANS --
 which registers exist, what address each sits at, what a masked write does --
 is the model's, and no policy may touch it. What the generated code LOOKS LIKE
 -- that an operation is called `wb_dma_start`, that the header is `wb_dma.h`,
-that a type carries a `_t` suffix -- is a convention, and it is the one thing
+that a type is spelled as in PSS -- is a convention, and it is the one thing
 organisations actually need to change.
 
 Before this, those two were the same code. Changing `wb_dma_start` to

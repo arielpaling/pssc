@@ -182,20 +182,20 @@ def test_the_footprint_is_recorded_not_guessed(tmp_path):
 
     # `.bss` of wb_dma.o is 0, and that is not the interesting number: under
     # `--lifecycle static` the OBJECT lives in the caller, so the RAM cost is
-    # sizeof(wb_dma_t) -- one engine plus four channels inline -- and it shows
+    # sizeof(wb_dma_c) -- one engine plus four channels inline -- and it shows
     # up only in a TU that declares one.
     with open(os.path.join(out, "sz.c"), "w") as fp:
         fp.write('#include "wb_dma.h"\n'
-                 "wb_dma_t the_dma;\n")
+                 "wb_dma_c the_dma;\n")
     subprocess.run([_CC[0], "-std=c99", "-Os", "-I", out, "-c",
                     os.path.join(out, "sz.c"), "-o",
                     os.path.join(out, "sz.o")], check=True)
     bss = (_sizes(out, "sz.o") or {}).get(".bss", 0)
 
     print(f"\nFOOTPRINT wb_dma.o -Os: .text={text} bytes; "
-          f"sizeof(wb_dma_t)={bss} bytes of .bss (engine + 4 channels inline)")
+          f"sizeof(wb_dma_c)={bss} bytes of .bss (engine + 4 channels inline)")
     assert 0 < text < 32768, f".text={text}: the driver changed size sharply"
-    assert 0 < bss < 4096, f"sizeof(wb_dma_t)={bss}: the handle changed size sharply"
+    assert 0 < bss < 4096, f"sizeof(wb_dma_c)={bss}: the handle changed size sharply"
 
 
 @pytest.mark.c_toolchain
@@ -214,7 +214,7 @@ def test_unreferenced_operations_are_dropped_by_gc_sections(tmp_path):
     with open(os.path.join(out, "main.c"), "w") as fp:
         fp.write('#include "wb_dma.h"\n'
                  "static const pssc_mem_if BUS;\n"
-                 "static wb_dma_t dma;\n"
+                 "static wb_dma_c dma;\n"
                  "int main(void) {\n"
                  "  wb_dma_init(&dma, &BUS, 0x1000);\n"
                  "  wb_dma_pause_engine(&dma, 1);\n"

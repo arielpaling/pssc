@@ -106,14 +106,31 @@ def parse_class_map(spec) -> Dict[str, str]:
     return parse_prefix_map(spec)
 
 
-def class_names(model, root_class: str, overrides=None) -> Prefixes:
-    """Per-component-type class name, with the same collision rules as C.
+class _ClassNames:
+    """Component type -> C++ class name: the PSS type name, or the name
+    `--prefix-map` gave it. A view onto C's `Prefixes`, which owns the rule
+    and the collision check."""
 
-    Shared with the C backend because it is the same question -- two component
-    types that collide after `_c`-stripping would have their operations emitted
-    under one name -- and one answer is better than two that can disagree.
+    def __init__(self, prefixes: Prefixes):
+        self._p = prefixes
+
+    def __getitem__(self, dtype) -> str:
+        return self._p.type_name(dtype)
+
+    def __contains__(self, dtype) -> bool:
+        return dtype in self._p
+
+
+def class_names(model, root_class: str, overrides=None) -> _ClassNames:
+    """Per-component-type class name: the PSS type name, as in C.
+
+    Shared with the C backend because it is the same question -- what a
+    component type is called, and whether two are called the same -- and one
+    answer is better than two that can disagree. A class has no symbol prefix:
+    its members are scoped by it, so only the class names must be distinct.
     """
-    return Prefixes(model, root_class, overrides, language="C++")
+    return _ClassNames(Prefixes(model, root_class, overrides,
+                                language="C++", check_prefixes=False))
 
 
 def cpp_type(dtype) -> str:
