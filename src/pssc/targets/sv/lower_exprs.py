@@ -104,6 +104,9 @@ def lower_expr(ctx: LoweringContext, expr: ir.Expr) -> str:
         container = lower_expr(ctx, expr.container)
         return f"{val} inside {{{container}}}"
 
+    if isinstance(expr, ir.ExprList):
+        return ", ".join(lower_expr(ctx, elt) for elt in expr.elts)
+
     if isinstance(expr, ir.ExprRangeList):
         parts = []
         for r in expr.ranges:

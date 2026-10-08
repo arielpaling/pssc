@@ -414,19 +414,17 @@ def _lower_traversal(
     lines = ["begin"]
 
     # --- Consumer: inject buffer inputs before pre_solve ---
+    has_flow_input = False
     if fctx is not None:
         for b in fctx.consumer.get(handle, []):
             if b.flow_kind in ("buffer", "stream", "state"):
+                has_flow_input = True
                 var_name = fctx.get_flow_var(b)
                 lines.append(f"  // inject flow input: {b.consumer_field} from {var_name}")
                 lines.append(f"  {handle}.{b.consumer_field} = {var_name};")
 
-    # Re-enable constraints (was disabled in parent pre_solve to avoid null traversal)
-    lines.append(f"  {handle}.constraint_mode(1);  // re-enable for explicit randomize")
-    # Note: do NOT call rand_mode(0) on state flow objects here — VCS applies it
-    # class-wide, which would disable randomization of ALL instances of that class.
-    # The consumer's class-level constraints are sufficient to propagate state values.
-
+    if has_flow_input:
+        lines.append(f"  {handle}.constraint_mode(1);")
     lines.append(f"  {handle}.comp = {comp_expr};")
     lines.append(f"  {handle}.pre_solve();")
 
@@ -441,13 +439,19 @@ def _lower_traversal(
     if trav.inline_constraints:
         with_parts.extend(lower_expr(ctx, c) for c in trav.inline_constraints)
 
-    if with_parts:
-        with_body = "; ".join(with_parts)
-        lines.append(f"  if (!{handle}.randomize() with {{ {with_body}; }})")
-    else:
-        lines.append(f"  if (!{handle}.randomize())")
-    lines.append(f'    $fatal(1, "randomize failed: {handle}");')
-
+    # A parent action has already solved named child handles as part of its
+    # compound solve domain. Re-randomizing an unconstrained traversal here
+    # discards parent relationships (for example tx.data == rx.expected).
+    # Re-solve only when this traversal supplies its own constraints or flow
+    # bindings, which are necessarily execution-time values.
+    needs_resolve = bool(with_parts)
+    if needs_resolve:
+        if with_parts:
+            with_body = "; ".join(with_parts)
+            lines.append(f"  if (!{handle}.randomize() with {{ {with_body}; }})")
+        else:
+            lines.append(f"  if (!{handle}.randomize())")
+        lines.append(f'    $fatal(1, "randomize failed: {handle}");')
     lines.append(f"  {handle}.post_solve();")
     lines.append(f"  {handle}.body();")
 

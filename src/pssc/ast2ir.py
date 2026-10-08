@@ -1082,6 +1082,17 @@ class AstToIrTranslator:
             if not isinstance(child, pss_ast.ComponentBind):
                 continue
             pool_path = child.getPool_path()
+            if not isinstance(pool_path, str):
+                hier_id = (pool_path.getHier_id()
+                           if hasattr(pool_path, 'getHier_id') else pool_path)
+                parts = []
+                if hasattr(hier_id, 'numElems'):
+                    for i in range(hier_id.numElems()):
+                        elem = hier_id.getElem(i)
+                        id_obj = elem.getId() if hasattr(elem, 'getId') else None
+                        if id_obj is not None:
+                            parts.append(id_obj.getId() if hasattr(id_obj, 'getId') else str(id_obj))
+                pool_path = '.'.join(parts)
             # The pool is named by the final element of the (usually trivial)
             # hierarchical path, matching declared pool names.
             pool_name = pool_path.split(".")[-1] if pool_path else pool_path
@@ -2344,6 +2355,12 @@ class AstToIrTranslator:
         result: ir.Expr = ir.TypeExprRefSelf()
         if hier_id is None:
             return result
+        # Current pssparser passes ExprRefPathContext for activity-bind sides;
+        # the historical frontend API passed its contained hierarchical ID.
+        if not hasattr(hier_id, 'numElems') and hasattr(hier_id, 'getHier_id'):
+            hier_id = hier_id.getHier_id()
+        if hier_id is None or not hasattr(hier_id, 'numElems'):
+            return result
         for i in range(hier_id.numElems()):
             elem = hier_id.getElem(i)
             id_obj = elem.getId() if hasattr(elem, 'getId') else None
@@ -2785,8 +2802,10 @@ class AstToIrTranslator:
         """
         # Determine the constraint function name
         raw_name = constraint_block.getName() if hasattr(constraint_block, 'getName') else None
-        if raw_name:
-            func_name = raw_name
+        if isinstance(raw_name, pss_ast.ExprId):
+            func_name = raw_name.getId()
+        elif raw_name:
+            func_name = str(raw_name)
         else:
             # Auto-generate a unique name based on position in owner's function list
             idx = sum(1 for f in owner.functions if f.metadata.get('_is_constraint'))

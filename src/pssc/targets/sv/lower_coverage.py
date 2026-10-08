@@ -43,11 +43,10 @@ def lower_action_covergroups(
     if not cgs:
         return []
 
-    sv_name = ctx.mangle_name(action_qname)
-    cg_name = f"cg_{sv_name}"
+    cg_inst_name = "cg_inst"
 
     lines: List[str] = []
-    lines.append(f"  covergroup {cg_name};")
+    lines.append(f"  covergroup {cg_inst_name};")
 
     # Emit coverpoints for each rand field on the action as defaults;
     # override with explicit coverpoints when the IR carries them.
@@ -68,8 +67,13 @@ def lower_action_covergroups(
                 lines.append(f"    cp_{f.name}: coverpoint {f.name};")
 
     lines.append(f"  endgroup")
+    # A covergroup declared inside a class is a class member.  Construct it
+    # explicitly so sampling is portable across simulators (and does not
+    # dereference a null handle in Verilator).
+    lines.append(f"  function new();")
+    lines.append(f"    {cg_inst_name} = new();")
+    lines.append(f"  endfunction")
     lines.append(f"")
-    lines.append(f"  {cg_name} cg_inst;")
     return lines
 
 
@@ -82,4 +86,4 @@ def lower_covergroup_sample_call(action_qname: str) -> List[str]:
     Returns:
         SV statement lines to add to the ``post_solve`` body.
     """
-    return ["if (cg_inst != null) cg_inst.sample();"]
+    return ["cg_inst.sample();"]

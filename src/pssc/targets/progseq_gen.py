@@ -93,7 +93,8 @@ def generate(model, pkg_name: str, reg_fields: str = "named") -> List[Path]:
     # import interface as their bus.
     pkg.append(f"  // ----- Import API (root: {tree.name}) -----")
     needs_yield = uses_yield(model.comp_dtypes)
-    pkg.append(emit_import_api(root, needs_yield, model.ctor_names))
+    pkg.append(emit_import_api(root, needs_yield, model.ctor_names,
+                               model.imports))
     pkg.append("")
     for comp in regular:
         if comp.dtype is root:
@@ -105,7 +106,7 @@ def generate(model, pkg_name: str, reg_fields: str = "named") -> List[Path]:
         pkg.append("")
     pkg.append(f"  // ----- Component handle/factory: {tree.name} -----")
     pkg.append(emit_component(root, needs_yield, namers.get(id(root)),
-                              model.ctor_names))
+                              model.ctor_names, model.imports))
     pkg.append("")
     pkg.append(f"endpackage")
     pkg.append("")

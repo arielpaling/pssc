@@ -165,7 +165,8 @@ class _BodyEmitter(BodyWalker):
 
     indent = "  "
 
-    def __init__(self, fn, comp, member_of, namer=None, ctor_names=None):
+    def __init__(self, fn, comp, member_of, namer=None, ctor_names=None,
+                 imports=None):
         self.fn = fn
         #: This compile's constructor names -- see `_operations`.
         self.ctor_names = ctor_names
@@ -173,6 +174,10 @@ class _BodyEmitter(BodyWalker):
         # disables it, and every call site then emits the literal pair it
         # emitted before this existed -- so the naming is never load-bearing.
         self.namer = namer
+        # Package-scope PSS import functions belong to the platform seam.
+        # Render them through the root import implementation rather than as
+        # unbound SystemVerilog calls.
+        self.imports = frozenset((imports or {}).keys())
         args = (fn.args.args if fn is not None and fn.args else [])
         # rename map for SV-keyword args
         self.arg_rename = {a.arg: mangle(a.arg) for a in args}
@@ -300,6 +305,9 @@ class _BodyEmitter(BodyWalker):
         # address-space object in generated SV, only 64-bit addresses.
         if _dt_name(callee) == "ExprAttribute" and callee.attr in _ADDR_BUILTINS:
             return _ADDR_BUILTINS[callee.attr](self, e)
+        if callee_name(callee) in self.imports:
+            args = ", ".join(self.expr(a) for a in e.args)
+            return f"m_imp.{mangle(callee_name(callee))}({args})"
         # PSS exec built-ins have no definition to call: `message(...)` is
         # part of the language, not of the generated package, so emitting
         # it verbatim produces SV that references a task that does not
@@ -929,7 +937,8 @@ def uses_yield(components) -> bool:
     return any(in_stmts(fn.body) for c in components for fn in (c.functions or []))
 
 
-def emit_import_api(root, needs_yield: bool = False, ctor_names=None) -> str:
+def emit_import_api(root, needs_yield: bool = False, ctor_names=None,
+                    imports=None) -> str:
     """``interface class <root>_import_if extends pss_mem_if`` plus any
     engine-specific import functions (none for the WB DMA engine)."""
     cls = f"{_strip_pkg(root.name)}_import_if"
@@ -952,6 +961,12 @@ def emit_import_api(root, needs_yield: bool = False, ctor_names=None) -> str:
         elif k == FuncKind.IMPORT_SOLVE:
             ret = sv_type(fn.returns) if fn.returns is not None else "void"
             lines.append(f"    pure virtual function {ret} {mangle(fn.name)}({_signature(fn)});")
+    for fn in (imports or {}).values():
+        if getattr(fn, "is_solve", False):
+            ret = sv_type(fn.returns) if fn.returns is not None else "void"
+            lines.append(f"    pure virtual function {ret} {mangle(fn.name)}({_signature(fn)});")
+        else:
+            lines.append(f"    pure virtual task {mangle(fn.name)}({_signature(fn)});")
     lines.append("  endclass")
     return "\n".join(lines)
 
@@ -1025,13 +1040,13 @@ def _bind_body(comp, ctor, members, subs, *, bus: str, base_arg: str) -> List[st
 
 
 def _operation_defs(comp, members: Dict[str, str], namer=None,
-                    ctor_names=None) -> List[str]:
+                    ctor_names=None, imports=None) -> List[str]:
     """Export operations. `virtual`, not plain -- they implement the export
     interface's pure virtuals, and stricter simulators require the override."""
     lines: List[str] = []
     for fn in _operations(comp, ctor_names):
         be = _BodyEmitter(fn, comp, members, namer=namer,
-                          ctor_names=ctor_names)
+                          ctor_names=ctor_names, imports=imports)
         blank_line(lines)
         lines += doc_block(getattr(fn, "doc", None), "    ")
         lines.append(f"    virtual task {mangle(fn.name)}({_signature(fn)});")
@@ -1107,7 +1122,7 @@ def emit_subcomponent_class(comp, root, namer=None, ctor_names=None) -> str:
 
 
 def emit_component(root, needs_yield: bool = False, namer=None,
-                   ctor_names=None) -> str:
+                   ctor_names=None, imports=None) -> str:
     """The component class, named after the component itself -- one class that is
 
       * the **export implementation** (`implements <comp>_if`, the operations),
@@ -1157,7 +1172,7 @@ def emit_component(root, needs_yield: bool = False, namer=None,
     lines.append("    endfunction")
     lines.append("")
 
-    lines += _operation_defs(root, members, namer, ctor_names)
+    lines += _operation_defs(root, members, namer, ctor_names, imports)
     lines += _accessor_defs(root, members, subs)
 
     # import redirect: forward each memory-access primitive to the user object.
@@ -1172,6 +1187,17 @@ def emit_component(root, needs_yield: bool = False, namer=None,
             lines.append(
                 f"    virtual task {meth}(addr_handle_t addr, {dt} data); "
                 f"m_imp.{meth}(addr, data); endtask")
+    for fn in (imports or {}).values():
+        arg_names = ", ".join(mangle(a.arg) for a in fn.args.args)
+        if getattr(fn, "is_solve", False):
+            ret = sv_type(fn.returns) if fn.returns is not None else "void"
+            lines.append(
+                f"    virtual function {ret} {mangle(fn.name)}({_signature(fn)}); "
+                f"return m_imp.{mangle(fn.name)}({arg_names}); endfunction")
+        else:
+            lines.append(
+                f"    virtual task {mangle(fn.name)}({_signature(fn)}); "
+                f"m_imp.{mangle(fn.name)}({arg_names}); endtask")
 
     # static factory entry point -> returns the export-interface handle.
     lines += [

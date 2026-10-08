@@ -14,6 +14,7 @@ from zuspec.be.sv.ir.sv import (
     SVClassField,
     SVConstraintBlock,
     SVFunctionDecl,
+    SVRawItem,
     SVTaskDecl,
 )
 
@@ -108,6 +109,30 @@ def _is_action_class_field(ctx: LoweringContext, field: ir.Field) -> bool:
     return False
 
 
+def _action_has_flow_input(ctx: LoweringContext, field: ir.Field) -> bool:
+    """Whether a named action handle has an input flow-object field.
+
+    Such an input is assigned at traversal time.  Its constraint must not be
+    evaluated while the parent compound action is solving, because the handle
+    is necessarily null until the flow binding is injected.
+    """
+    if not _is_action_class_field(ctx, field):
+        return False
+    dtype = field.datatype
+    target = dtype if isinstance(dtype, ir.DataTypeClass) else None
+    if target is None and isinstance(dtype, ir.DataTypeRef) and ctx.ir_ctx is not None:
+        ref_name = getattr(dtype, "ref_name", "")
+        target = ctx.ir_ctx.type_map.get(ref_name)
+        if target is None:
+            target = next((v for k, v in ctx.ir_ctx.type_map.items()
+                           if k.endswith(f"::{ref_name}")), None)
+    from zuspec.ir.core.fields import FieldKind
+    return isinstance(target, ir.DataTypeClass) and any(
+        f.kind == FieldKind.Input and isinstance(f.datatype, ir.DataTypeStruct)
+        for f in target.fields
+    )
+
+
 def _find_pool_capacity(ctx: LoweringContext, resource_dt, comp_type_name: Optional[str]) -> int:
     """Return the pool capacity for a resource datatype in the given component context.
 
@@ -187,6 +212,16 @@ def lower_action(
         from zuspec.ir.core.fields import FieldKind as _FOK
         if f.kind == _FOK.Output and isinstance(f.datatype, ir.DataTypeStruct):
             is_rand = True
+        # Named action handles are part of a compound action's solve domain.
+        # Keeping an allocated handle non-random makes a parent constraint such
+        # as ``tx.data == rx.expected`` a state check instead of a relationship
+        # that the solver can satisfy.
+        if _is_action_class_field(ctx, f):
+            # A child that consumes a flow object cannot participate in its
+            # parent's solve: the producer binds that object only when the
+            # activity executes. Other child actions stay rand so parent
+            # cross-action constraints solve as one compound action tree.
+            is_rand = not _action_has_flow_input(ctx, f)
         fields.append(SVClassField(
             name=ctx.safe_field_name(f.name),
             dtype=sv_dtype,
@@ -262,9 +297,9 @@ def lower_action(
                     elif _is_action_class_field(ctx, f):
                         fname = ctx.safe_field_name(f.name)
                         func_lines.append(f"if ({fname} == null) {fname} = new();")
-                        # Disable constraints so parent randomize() skips this
-                        # handle's constraint graph (inputs may be null until body).
-                        func_lines.append(f"{fname}.constraint_mode(0);")
+                        func_lines.append(f"{fname}.pre_solve();")
+                        if _action_has_flow_input(ctx, f):
+                            func_lines.append(f"{fname}.constraint_mode(0);")
             if not func_lines:
                 func_lines = ["// no-op"]
             # Sample covergroup in post_solve
@@ -286,19 +321,17 @@ def lower_action(
             ctx.safe_field_name(f.name)
             for f in dtype.fields if f.kind == _FK.Output
         ]
-        handle_fields = [
-            ctx.safe_field_name(f.name)
-            for f in dtype.fields if _is_action_class_field(ctx, f)
-        ]
+        handle_fields = [f for f in dtype.fields if _is_action_class_field(ctx, f)]
         if output_fields or handle_fields:
             ctor_lines = []
             for fname in output_fields:
                 ctor_lines.append(f"if ({fname} == null) {fname} = new();")
-            for fname in handle_fields:
+            for f in handle_fields:
+                fname = ctx.safe_field_name(f.name)
                 ctor_lines.append(f"if ({fname} == null) {fname} = new();")
-                # Disable constraints so parent randomize() won't fail on null inputs
-                # (flow-object inputs like 'prev' are only set later in body()).
-                ctor_lines.append(f"{fname}.constraint_mode(0);")
+                ctor_lines.append(f"{fname}.pre_solve();")
+                if _action_has_flow_input(ctx, f):
+                    ctor_lines.append(f"{fname}.constraint_mode(0);")
         fields_to_construct = output_fields + handle_fields  # for empty check
         if fields_to_construct:
             pass  # ctor_lines already built above
@@ -336,4 +369,5 @@ def lower_action(
         constraints=constraints,
         functions=functions,
         tasks=tasks,
+        items=[SVRawItem(lines=cg_lines)] if cg_lines else [],
     )

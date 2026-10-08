@@ -174,6 +174,60 @@ def lower_stmt(ctx: LoweringContext, stmt: ir.Stmt) -> List[str]:
     if isinstance(stmt, ir.StmtContinue):
         return ["continue;"]
 
+    if isinstance(stmt, ir.StmtYield):
+        # PSS yield is cooperative scheduling.  A zero-delay timing control
+        # yields the current active event region without inventing a clock or
+        # target-specific wait primitive.
+        return ["#0;"]
+
+    if isinstance(stmt, ir.StmtYield):
+        # PSS yield is cooperative scheduling.  A zero-delay timing control
+        # yields the current active event region without inventing a clock or
+        # target-specific wait primitive.
+        return ["#0;"]
+
+    if isinstance(stmt, ir.StmtYield):
+        # PSS yield is cooperative scheduling.  A zero-delay timing control
+        # yields the current active event region without inventing a clock or
+        # target-specific wait primitive.
+        return ["#0;"]
+
+    if isinstance(stmt, ir.StmtYield):
+        # PSS yield is cooperative scheduling.  A zero-delay timing control
+        # yields the current active event region without inventing a clock or
+        # target-specific wait primitive.
+        return ["#0;"]
+
+    if isinstance(stmt, ir.StmtYield):
+        # PSS yield is cooperative scheduling.  A zero-delay timing control
+        # yields the current active event region without inventing a clock or
+        # target-specific wait primitive.
+        return ["#0;"]
+
+    if isinstance(stmt, ir.StmtYield):
+        # PSS yield is cooperative scheduling.  A zero-delay timing control
+        # yields the current active event region without inventing a clock or
+        # target-specific wait primitive.
+        return ["#0;"]
+
+    if isinstance(stmt, ir.StmtYield):
+        # PSS yield is cooperative scheduling.  A zero-delay timing control
+        # yields the current active event region without inventing a clock or
+        # target-specific wait primitive.
+        return ["#0;"]
+
+    if isinstance(stmt, ir.StmtYield):
+        # PSS yield is cooperative scheduling.  A zero-delay timing control
+        # yields the current active event region without inventing a clock or
+        # target-specific wait primitive.
+        return ["#0;"]
+
+    if isinstance(stmt, ir.StmtYield):
+        # PSS yield is cooperative scheduling.  A zero-delay timing control
+        # yields the current active event region without inventing a clock or
+        # target-specific wait primitive.
+        return ["#0;"]
+
     if isinstance(stmt, ir.StmtPass):
         return []  # No SV equivalent; omit
 
