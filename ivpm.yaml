@@ -35,6 +35,8 @@ package:
     - name: dv-solve
       url: https://github.com/fvutils/dv-solve.git
       dep-set: use
+    - name: covsight
+      url: https://github.com/covsight/covsight.git
     - name: pytest
       src: pypi
     - name: sphinx
