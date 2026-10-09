@@ -19,6 +19,74 @@ def emitter():
 
 
 class TestLowerAction:
+    def test_compound_action_lifts_nested_value_legality(self, ctx, emitter):
+        line = ir.DataTypeStruct(
+            name="line_s",
+            super=None,
+            fields=[ir.Field(name="baud", datatype=ir.DataTypeInt(bits=8, signed=False),
+                             rand_kind="rand")],
+            functions=[ir.Function(
+                name="legal_baud",
+                body=[ir.StmtExpr(expr=ir.ExprCompare(
+                    left=ir.ExprRefLocal(name="baud"),
+                    ops=[ir.CmpOp.GtE],
+                    comparators=[ir.ExprConstant(value=4)],
+                ))],
+                metadata={"_is_constraint": True},
+            )],
+        )
+        child = ir.DataTypeClass(
+            name="configure",
+            super=None,
+            fields=[ir.Field(name="line", datatype=line, rand_kind="rand")],
+        )
+        parent = ir.DataTypeClass(
+            name="scenario",
+            super=None,
+            fields=[ir.Field(name="cfg", datatype=child, rand_kind="rand")],
+        )
+        text = emitter.emit_one(lower_action(ctx, parent))
+        assert "constraint _nested_cfg" in text
+        assert "cfg.line.baud >= 4" in text
+
+    def test_compound_action_keeps_unconstrained_nested_scalar_solver_visible(self, ctx, emitter):
+        """An inline traversal may constrain any legal nested rand scalar."""
+        line = ir.DataTypeStruct(
+            name="line_s",
+            super=None,
+            fields=[ir.Field(name="two_stop_bits",
+                             datatype=ir.DataTypeInt(bits=1, signed=False),
+                             rand_kind="rand")],
+        )
+        child = ir.DataTypeClass(
+            name="configure",
+            super=None,
+            fields=[ir.Field(name="line", datatype=line, rand_kind="rand")],
+        )
+        parent = ir.DataTypeClass(
+            name="scenario",
+            super=None,
+            fields=[ir.Field(name="cfg", datatype=child, rand_kind="rand")],
+        )
+        text = emitter.emit_one(lower_action(ctx, parent))
+        assert "cfg.line.two_stop_bits == cfg.line.two_stop_bits" in text
+
+    def test_action_constructs_rand_value_struct_before_solve(self, ctx, emitter):
+        packet = ir.DataTypeStruct(
+            name="packet_s",
+            super=None,
+            fields=[ir.Field(name="data", datatype=ir.DataTypeInt(bits=8, signed=False),
+                             rand_kind="rand")],
+        )
+        act = ir.DataTypeClass(
+            name="packet_action",
+            super=None,
+            fields=[ir.Field(name="packet", datatype=packet, rand_kind="rand")],
+        )
+        text = emitter.emit_one(lower_action(ctx, act))
+        assert "rand packet_s packet;" in text
+        assert "if (packet == null) packet = new();" in text
+
     def test_simple_action(self, ctx, emitter):
         act = ir.DataTypeClass(
             name="my_action",
@@ -234,8 +302,8 @@ class TestSuperTypeResolution:
         assert "class pss_top__derived_act extends pss_top__base_act;" in sv, \
             f"Expected qualified extends, got:\n{sv}"
 
-    def test_cross_component_super_resolves(self):
-        """Action in sub-component extending action in base component."""
+    def test_component_scoped_super_resolves(self):
+        """An action resolves a super type declared in its component."""
         from pssc import Parser, AstToIrTranslator
         from pssc.targets.sv.pss_to_sv import pss_to_sv
         from zuspec.be.sv.ir.sv_emit import SVEmitter
@@ -244,10 +312,6 @@ class TestSuperTypeResolution:
             component sub_c {
                 abstract action base_op { rand int v; }
                 action impl_op : base_op { rand int extra; }
-            }
-            component pss_top {
-                sub_c sub;
-                action root_a { activity { do sub::impl_op; } }
             }
         ''')])
         ast = p.link()

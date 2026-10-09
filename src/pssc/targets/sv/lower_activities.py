@@ -7,6 +7,7 @@ design document.
 from __future__ import annotations
 
 import dataclasses as dc
+import re
 from typing import Dict, List, Optional, TYPE_CHECKING
 
 import zuspec.ir.core as ir
@@ -35,6 +36,68 @@ if TYPE_CHECKING:
     from .context import LoweringContext
     from .analyze_flow import ActivityFlowInfo, FlowBindingInfo
     from .analyze_activity import ActivityPlan, PipelineChain
+
+
+def _resolve_type(ctx, type_name):
+    """Resolve an activity type name through the linked PSS type map."""
+    if ctx.ir_ctx is None or not type_name:
+        return None
+    dtype = ctx.ir_ctx.type_map.get(type_name)
+    if dtype is None:
+        dtype = next((value for key, value in ctx.ir_ctx.type_map.items()
+                      if key.endswith(f"::{type_name}")), None)
+    return dtype
+
+
+def _value_struct_with_target(ctx, trav: ir.ActivityTraversal,
+                              with_parts: List[str]) -> Optional[tuple[str, List[str]]]:
+    """Select a direct value-struct randomize target for a traversal ``with``.
+
+    sv-native currently represents PSS value structs as class handles.  A
+    leaf action's ``randomize() with { line.field == value; }`` therefore asks
+    Verilator to solve dotted class members it has not registered.  Randomize
+    the value object itself when every inline constraint belongs to its one
+    direct value-struct field.  Compound actions remain solved at their parent
+    action level, preserving cross-action constraints.
+    """
+    action = _resolve_type(ctx, trav.type_qname)
+    # The front end leaves type_qname unset for an ordinary declared handle.
+    # Resolve that handle structurally.  Several parents may declare the same
+    # action type under the same field name; collapse by object identity.
+    if action is None and ctx.ir_ctx is not None:
+        candidates = []
+        for candidate in ctx.ir_ctx.type_map.values():
+            if not isinstance(candidate, ir.DataTypeClass):
+                continue
+            if any(field.name == trav.handle for field in candidate.fields):
+                candidates.append(candidate)
+        targets = {}
+        for parent in {id(candidate): candidate for candidate in candidates}.values():
+            field = next(field for field in parent.fields if field.name == trav.handle)
+            target = _resolve_type(ctx, field.datatype.ref_name) \
+                if isinstance(field.datatype, ir.DataTypeRef) else field.datatype
+            targets[id(target)] = target
+        if len(targets) == 1:
+            action = next(iter(targets.values()))
+    if not isinstance(action, ir.DataTypeClass):
+        return None
+    candidates = []
+    for field in action.fields:
+        dtype = field.datatype
+        if isinstance(dtype, ir.DataTypeRef):
+            dtype = _resolve_type(ctx, dtype.ref_name)
+        if isinstance(dtype, ir.DataTypeStruct) and field.rand_kind in ("rand", "randc"):
+            candidates.append(field.name)
+    if len(candidates) != 1 or not with_parts:
+        return None
+    field_name = candidates[0]
+    prefix = f"{field_name}."
+    if not all(re.search(rf"(?<![A-Za-z0-9_$]){re.escape(prefix)}", part)
+               for part in with_parts):
+        return None
+    stripped = [re.sub(rf"(?<![A-Za-z0-9_$]){re.escape(prefix)}", "", part)
+                for part in with_parts]
+    return field_name, stripped
 
 
 # ------------------------------------------------------------------ #
@@ -446,7 +509,12 @@ def _lower_traversal(
     # bindings, which are necessarily execution-time values.
     needs_resolve = bool(with_parts)
     if needs_resolve:
-        if with_parts:
+        value_target = _value_struct_with_target(ctx, trav, with_parts)
+        if value_target is not None:
+            field_name, value_constraints = value_target
+            with_body = "; ".join(value_constraints)
+            lines.append(f"  if (!{handle}.{field_name}.randomize() with {{ {with_body}; }})")
+        elif with_parts:
             with_body = "; ".join(with_parts)
             lines.append(f"  if (!{handle}.randomize() with {{ {with_body}; }})")
         else:

@@ -140,7 +140,20 @@ class TestLowerStruct:
         )
         sv = lower_struct(ctx, dt)
         text = emitter.emit_one(sv)
-        assert "mode_e mode;" in text
+        # Structs lower as SV classes.  Keep enum leaves solver-visible when
+        # a parent class constrains them through a dotted path.
+        assert "bit [0:0] mode;" in text
+
+    def test_struct_enum_uses_minimum_storage_width(self, ctx, emitter):
+        enum_dt = ir.DataTypeEnum(name="format_e", items={"A": 0, "B": 4})
+        dt = ir.DataTypeStruct(
+            name="Line",
+            super=None,
+            fields=[ir.Field(name="format", datatype=enum_dt, rand_kind="rand")],
+        )
+        text = emitter.emit_one(lower_struct(ctx, dt))
+        assert "rand bit [2:0] format;" in text
+        assert "format inside {0, 4}" in text
 
 
 class TestLowerFlowObjects:
@@ -189,7 +202,7 @@ class TestCollectionTypes:
         )
         sv = lower_struct(ctx, dt)
         text = emitter.emit_one(sv)
-        assert "bit [31:0] [$] data;" in text
+        assert "bit [31:0] data[$];" in text
 
     def test_fixed_array_field(self, ctx, emitter):
         dt = ir.DataTypeStruct(
@@ -204,7 +217,7 @@ class TestCollectionTypes:
         )
         sv = lower_struct(ctx, dt)
         text = emitter.emit_one(sv)
-        assert "bit [7:0] [16] buf;" in text
+        assert "bit [7:0] buf[16];" in text
 
     def test_map_field(self, ctx, emitter):
         dt = ir.DataTypeStruct(
@@ -219,7 +232,7 @@ class TestCollectionTypes:
         )
         sv = lower_struct(ctx, dt)
         text = emitter.emit_one(sv)
-        assert "bit [31:0] [string] lookup;" in text
+        assert "bit [31:0] lookup[string];" in text
 
     def test_chandle_field(self, ctx, emitter):
         dt = ir.DataTypeStruct(

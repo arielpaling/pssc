@@ -6,6 +6,7 @@ with rand fields, constraints, body task, and component reference.
 from __future__ import annotations
 
 from typing import List, Optional
+import re
 
 import zuspec.ir.core as ir
 from zuspec.be.sv.ir.sv import (
@@ -167,6 +168,95 @@ def _find_pool_capacity(ctx: LoweringContext, resource_dt, comp_type_name: Optio
     return 16
 
 
+def _resolve_dtype(ctx: LoweringContext, dtype):
+    """Resolve a direct or referenced IR datatype without changing its spelling."""
+    if not isinstance(dtype, ir.DataTypeRef) or ctx.ir_ctx is None:
+        return dtype
+    target = ctx.ir_ctx.type_map.get(dtype.ref_name)
+    if target is None:
+        target = next((v for k, v in ctx.ir_ctx.type_map.items()
+                       if k.endswith(f"::{dtype.ref_name}")), None)
+    return target if target is not None else dtype
+
+
+def _prefix_constraint(expr: str, fields: List[ir.Field], prefix: str,
+                       ctx: LoweringContext) -> str:
+    """Qualify local field references in a constraint copied into a parent.
+
+    sv-native represents PSS value structs and named sub-actions as SV class
+    handles.  Verilator solves their leaves only when the *parent* randomize()
+    call contains the relevant constraints.  PSS constraints on a child are
+    therefore copied into the compound solve domain with the child's field
+    path prepended.  Constraint lowering has already validated the expression;
+    replacing only whole safe field identifiers avoids changing literals or
+    qualified names.
+    """
+    for field in sorted(fields, key=lambda item: len(ctx.safe_field_name(item.name)), reverse=True):
+        name = ctx.safe_field_name(field.name)
+        expr = re.sub(rf"(?<![A-Za-z0-9_$]){re.escape(name)}(?![A-Za-z0-9_$])",
+                      f"{prefix}.{name}", expr)
+    return expr
+
+
+def _enum_domain_expr(ctx: LoweringContext, dtype, field_path: str) -> Optional[str]:
+    """Return a solver-visible finite domain for a PSS enum field, if any."""
+    enum_dt = _resolve_dtype(ctx, dtype)
+    if not isinstance(enum_dt, ir.DataTypeEnum):
+        return None
+    values = ", ".join(str(value) for value in enum_dt.items.values())
+    return f"{field_path} inside {{{values}}}"
+
+
+def _lift_value_constraints(ctx: LoweringContext, dtype, prefix: str,
+                            seen: set[int]) -> List[str]:
+    """Lift value-struct and child-action legality into a compound solve.
+
+    A PSS compound action is randomized once.  Calling randomize() on each
+    child afterwards would discard cross-action equalities, while omitting the
+    child's constraints leaves nested rand fields unconstrained.  Recursively
+    lifting legality is the small, simulator-neutral bridge between those
+    semantics for the current class-based SV representation.
+    """
+    dtype = _resolve_dtype(ctx, dtype)
+    if not isinstance(dtype, (ir.DataTypeStruct, ir.DataTypeClass)):
+        return []
+    if id(dtype) in seen:
+        return []
+    seen = set(seen)
+    seen.add(id(dtype))
+
+    exprs: List[str] = []
+    field_names = [field.name for field in dtype.fields]
+    for func in getattr(dtype, "functions", []):
+        local_exprs = lower_constraint_func(ctx, func, known_field_names=field_names)
+        if local_exprs is not None:
+            exprs.extend(_prefix_constraint(expr, dtype.fields, prefix, ctx)
+                         for expr in local_exprs)
+
+    for field in dtype.fields:
+        if field.rand_kind in ("rand", "randc"):
+            enum_expr = _enum_domain_expr(ctx, field.datatype,
+                                          f"{prefix}.{ctx.safe_field_name(field.name)}")
+            if enum_expr is not None:
+                exprs.append(enum_expr)
+        child = _resolve_dtype(ctx, field.datatype)
+        if isinstance(child, (ir.DataTypeStruct, ir.DataTypeClass)):
+            exprs.extend(_lift_value_constraints(
+                ctx, child, f"{prefix}.{ctx.safe_field_name(field.name)}", seen))
+        elif field.rand_kind in ("rand", "randc") and enum_expr is None:
+            # Verilator emits solver variables only for rand leaves referenced
+            # by a class-level constraint.  An inline ``randomize() with`` on
+            # a compound PSS action can therefore name a legal nested scalar
+            # that does not occur in the action's ordinary constraints.  Its
+            # second (or later) traversal is then lowered without a solver
+            # declaration for that scalar.  A self-equality is semantically
+            # neutral in SystemVerilog, while making every scalar rand leaf in
+            # this compound solve tree visible to the solver.
+            field_path = f"{prefix}.{ctx.safe_field_name(field.name)}"
+            exprs.append(f"{field_path} == {field_path}")
+    return exprs
+
+
 def lower_action(
     ctx: LoweringContext,
     dtype: ir.DataTypeClass,
@@ -286,12 +376,13 @@ def lower_action(
             if func.body:
                 for stmt in func.body:
                     func_lines.extend(lower_stmt(ctx, stmt))
-            # For pre_solve: construct any output flow-object fields so that
-            # their sub-field constraints don't raise a null-pointer error.
+            # PSS value structs lower to SV classes.  Construct ordinary
+            # struct handles as well as output flow objects before a parent
+            # action's solve domain references their leaves.
             if func.name == "pre_solve":
                 from zuspec.ir.core.fields import FieldKind
                 for f in dtype.fields:
-                    if f.kind == FieldKind.Output:
+                    if f.kind == FieldKind.Output or isinstance(f.datatype, ir.DataTypeStruct):
                         fname = ctx.safe_field_name(f.name)
                         func_lines.append(f"if ({fname} == null) {fname} = new();")
                     elif _is_action_class_field(ctx, f):
@@ -312,14 +403,39 @@ def lower_action(
                 body_lines=func_lines,
             ))
 
-    # Generate pre_solve() to construct output flow-object fields if not
+    # A compound action is solved as one object graph.  SV does not
+    # automatically apply a child class's constraints when only the parent is
+    # randomized, so preserve PSS legality (including value-struct bounds and
+    # enum domains) in that parent solve domain.  This is intentionally a
+    # generated constraint copy rather than a post-solve re-randomize: the
+    # latter would break parent/child equality constraints.
+    for field in dtype.fields:
+        child = _resolve_dtype(ctx, field.datatype)
+        # A direct value-struct member remains owned by its leaf action.  That
+        # action may be explicitly randomized with runtime ``with`` clauses;
+        # Verilator registers those dotted leaves there, but not duplicated
+        # class-level copies.  Lift only named child *actions*: recursion from
+        # that child still brings its value-struct legality into the compound
+        # parent solve domain.
+        if not isinstance(child, ir.DataTypeClass):
+            continue
+        lifted = _lift_value_constraints(
+            ctx, child, ctx.safe_field_name(field.name), {id(dtype)})
+        if lifted:
+            constraints.append(SVConstraintBlock(
+                name=f"_nested_{ctx.safe_field_name(field.name)}",
+                exprs=lifted,
+            ))
+
+    # Generate pre_solve() to construct struct and output-flow handles if not
     # already generated from an exec block.  This ensures that constraints
-    # referencing output flow-object sub-fields do not NPE at randomize().
+    # referencing their sub-fields do not NPE at randomize().
     if not any(f.name == "pre_solve" for f in functions):
         from zuspec.ir.core.fields import FieldKind as _FK
         output_fields = [
             ctx.safe_field_name(f.name)
-            for f in dtype.fields if f.kind == _FK.Output
+            for f in dtype.fields
+            if f.kind == _FK.Output or isinstance(f.datatype, ir.DataTypeStruct)
         ]
         handle_fields = [f for f in dtype.fields if _is_action_class_field(ctx, f)]
         if output_fields or handle_fields:

@@ -20,6 +20,35 @@ from .context import LoweringContext
 from .lower_constraints import lower_constraint_func
 
 
+def _resolve_enum(ctx: LoweringContext, dtype):
+    """Resolve a direct or referenced PSS enum datatype, if any."""
+    enum_dt = dtype if isinstance(dtype, ir.DataTypeEnum) else None
+    if enum_dt is None and isinstance(dtype, ir.DataTypeRef) and ctx.ir_ctx is not None:
+        enum_dt = ctx.ir_ctx.type_map.get(dtype.ref_name)
+        if enum_dt is None:
+            enum_dt = next((v for k, v in ctx.ir_ctx.type_map.items()
+                            if k.endswith(f"::{dtype.ref_name}")), None)
+    return enum_dt if isinstance(enum_dt, ir.DataTypeEnum) else None
+
+
+def _struct_field_sv_type(ctx: LoweringContext, dtype) -> str:
+    """Return the SV type for a PSS value-struct field.
+
+    Verilator's constrained-random solver does not register enum leaves of a
+    nested rand class when the enclosing class owns a global constraint.  PSS
+    value structs are lowered as SV classes by this backend, so preserve the
+    PSS enum domain in constraints but represent an enum *member* as its sized
+    bit-vector storage.  This keeps the leaf solver-visible and is assignment
+    compatible with enum target-import formals.
+    """
+    enum_dt = _resolve_enum(ctx, dtype)
+    if enum_dt is not None:
+        max_value = max(enum_dt.items.values(), default=0)
+        width = max(1, max_value.bit_length())
+        return f"bit [{width - 1}:0]"
+    return ctx.pss_type_to_sv_type_str(dtype)
+
+
 def _resolve_super(ctx: LoweringContext, ref_name: str) -> str:
     """Resolve an unqualified super-type reference to its canonical SV class name.
 
@@ -77,7 +106,7 @@ def lower_struct(ctx: LoweringContext, dtype: ir.DataTypeStruct) -> SVClass:
     # Fields
     fields: List[SVClassField] = []
     for f in dtype.fields:
-        sv_dtype = ctx.pss_type_to_sv_type_str(f.datatype)
+        sv_dtype = _struct_field_sv_type(ctx, f.datatype)
         is_rand = f.rand_kind == "rand"
         is_randc = f.rand_kind == "randc"
         fields.append(SVClassField(
@@ -89,6 +118,18 @@ def lower_struct(ctx: LoweringContext, dtype: ir.DataTypeStruct) -> SVClass:
 
     # Constraints
     constraints: List[SVConstraintBlock] = []
+    # Since nested value-struct enum leaves are emitted as scalar storage,
+    # retain their PSS enumeration domain explicitly.  This makes the domain
+    # part of the same parent solve tree as dotted constraints on that leaf.
+    for f in dtype.fields:
+        enum_dt = _resolve_enum(ctx, f.datatype)
+        if enum_dt is None or f.rand_kind not in ("rand", "randc"):
+            continue
+        values = ", ".join(str(value) for value in enum_dt.items.values())
+        constraints.append(SVConstraintBlock(
+            name=f"_enum_{ctx.safe_field_name(f.name)}",
+            exprs=[f"{ctx.safe_field_name(f.name)} inside {{{values}}}"],
+        ))
     for func in dtype.functions:
         exprs = lower_constraint_func(ctx, func)
         if exprs is not None:
