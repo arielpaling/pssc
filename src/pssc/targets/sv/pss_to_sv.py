@@ -7,7 +7,15 @@ from __future__ import annotations
 from typing import Any, List, Tuple
 
 import zuspec.ir.core as ir
-from zuspec.be.sv.ir.sv import SVForwardDecl
+from zuspec.be.sv.ir.sv import (
+    SVArg,
+    SVClass,
+    SVClassField,
+    SVForwardDecl,
+    SVFunctionDecl,
+    SVInterfaceClass,
+    SVTaskDecl,
+)
 
 from ...ast2ir import AstToIrContext
 from .context import LoweringContext
@@ -45,6 +53,20 @@ _STDLIB_BARE = frozenset([
     "packed_s",
 ])
 
+_STANDARD_EXECUTOR_FUNCTIONS = frozenset([
+    "get_context", "set_target_execution_unit", "get_target_execution_unit",
+    "addr_value", "addr_value_solve", "addr_value_abs",
+    "read8", "read16", "read32", "read64",
+    "write8", "write16", "write32", "write64",
+    "read_bytes", "write_bytes",
+])
+
+_ADDRESS_CLAIM_BASES = frozenset([
+    "addr_claim_base_s", "addr_claim_s", "transparent_addr_claim_s",
+    "addr_reg_pkg::addr_claim_base_s", "addr_reg_pkg::addr_claim_s",
+    "addr_reg_pkg::transparent_addr_claim_s",
+])
+
 
 def _is_stdlib(qname: str) -> bool:
     """Return True if *qname* belongs to a PSS stdlib package."""
@@ -54,6 +76,158 @@ def _is_stdlib(qname: str) -> bool:
     if qname.startswith(("bit[", "int[")):
         return True
     return qname in _STDLIB_BARE
+
+
+def _executor_extensions(ir_ctx: AstToIrContext):
+    """Return user-declared executor-base target prototypes.
+
+    The standard executor base has target primitives of its own. They are not
+    an sv-native binding surface: only a PSS ``extend component
+    executor_base_c`` prototype requests a generated target adapter.
+    """
+    base = (ir_ctx.type_map.get("executor_pkg::executor_base_c")
+            or ir_ctx.type_map.get("executor_base_c"))
+    if base is None:
+        return []
+    return [
+        fn for fn in getattr(base, "functions", [])
+        if getattr(fn, "is_target", False)
+        and (getattr(fn, "metadata", {}) or {}).get("component_prototype")
+        and (getattr(fn, "metadata", {}) or {}).get("component_extension")
+        and fn.name not in _STANDARD_EXECUTOR_FUNCTIONS
+    ]
+
+
+def _configure_executor_lowering(ctx: LoweringContext) -> None:
+    """Record the one concrete executor trait type sv-native can represent.
+
+    PSS templates permit distinct trait specializations. The class-based
+    native runtime intentionally does not pretend that one untyped field is
+    equivalent to those specializations: mixed specializations are rejected
+    before emitting SV.
+    """
+    traits = {
+        getattr(dtype, "executor_trait_name")
+        for dtype in ctx.ir_ctx.type_map.values()
+        if isinstance(dtype, ir.DataTypeComponent)
+        and getattr(dtype, "executor_trait_name", None)
+    }
+    if len(traits) > 1:
+        raise ValueError(
+            "sv-native supports one concrete executor_c trait specialization; "
+            f"found {', '.join(sorted(traits))}")
+    ctx.executor_trait_sv = (
+        ctx.pss_type_to_sv_type_str(ir.DataTypeRef(ref_name=next(iter(traits))))
+        if traits else None)
+    ctx.executor_target_functions = {fn.name for fn in _executor_extensions(ctx.ir_ctx)}
+
+
+def _refers_to_address_claim(ctx: LoweringContext, dtype, seen=None) -> bool:
+    """Whether *dtype* is, or derives from, an address-claim type."""
+    if seen is None:
+        seen = set()
+    if isinstance(dtype, ir.DataTypeRef):
+        name = dtype.ref_name
+        if name in _ADDRESS_CLAIM_BASES:
+            return True
+        dtype = ctx.ir_ctx.type_map.get(name)
+        if dtype is None:
+            dtype = next((value for key, value in ctx.ir_ctx.type_map.items()
+                          if key.endswith(f"::{name}")), None)
+    if dtype is None or id(dtype) in seen:
+        return False
+    seen.add(id(dtype))
+    name = getattr(dtype, "name", None)
+    if name in _ADDRESS_CLAIM_BASES:
+        return True
+    return _refers_to_address_claim(ctx, getattr(dtype, "super", None), seen)
+
+
+def _reject_unlowered_address_claims(ctx: LoweringContext) -> None:
+    """Fail closed until sv-native has a real address-claim allocator.
+
+    Address claims are allocations, not scalar fields. Emitting a class handle
+    without allocation, overlap, or address-space semantics would compile while
+    certifying a fabricated address. C0 probes this boundary separately.
+    """
+    for name, dtype in ctx.ir_ctx.type_map.items():
+        if _is_stdlib(name):
+            continue
+        if _refers_to_address_claim(ctx, dtype):
+            raise ValueError(
+                f"sv-native does not support address-claim allocation for '{name}'")
+        for field in getattr(dtype, "fields", []):
+            if _refers_to_address_claim(ctx, getattr(field, "datatype", None)):
+                raise ValueError(
+                    "sv-native does not support address-claim allocation for "
+                    f"'{name}.{field.name}'")
+
+
+def _lower_executor_dispatch(ctx: LoweringContext):
+    """Emit the explicit target binding used by ``executor().target_fn()``.
+
+    sv-native owns no software implementation. A PSS executor-base extension
+    therefore becomes an interface supplied by the testbench/integration
+    binding. The dispatch class fails loudly when it is unbound.
+    """
+    funcs = _executor_extensions(ctx.ir_ctx)
+    if not funcs:
+        return []
+
+    tasks, iface_funcs, dispatch_tasks, dispatch_funcs = [], [], [], []
+    for fn in funcs:
+        args = [SVArg(name=a.arg, dtype=ctx.pss_type_to_sv_type_str(a.annotation))
+                for a in getattr(getattr(fn, "args", None), "args", [])]
+        is_task = getattr(fn, "returns", None) is None
+        ret = (ctx.pss_type_to_sv_type_str(fn.returns)
+               if getattr(fn, "returns", None) is not None else "void")
+        if is_task:
+            tasks.append(SVTaskDecl(name=fn.name, args=args))
+            call_args = ", ".join(a.name for a in args)
+            dispatch_tasks.append(SVTaskDecl(
+                name=fn.name, args=args, is_virtual=True,
+                body_lines=[
+                    f'if (target_if == null) $fatal(1, "executor target {fn.name} is unbound");',
+                    f"target_if.{fn.name}({call_args});",
+                ]))
+        else:
+            iface_funcs.append(SVFunctionDecl(name=fn.name, args=args, return_type=ret))
+            call_args = ", ".join(a.name for a in args)
+            dispatch_funcs.append(SVFunctionDecl(
+                name=fn.name, args=args, return_type=ret, is_virtual=True,
+                body_lines=[
+                    f'if (target_if == null) $fatal(1, "executor target {fn.name} is unbound");',
+                    f"return target_if.{fn.name}({call_args});",
+                ]))
+
+    return [
+        SVInterfaceClass(
+            name="zsp_executor_target_if", tasks=tasks, functions=iface_funcs),
+        SVClass(
+            name="zsp_executor_dispatch_c",
+            extends_name="executor_pkg__executor_c",
+            fields=[SVClassField(name="target_if", dtype="zsp_executor_target_if")],
+            tasks=dispatch_tasks,
+            functions=[SVFunctionDecl(
+                name="new",
+                args=[SVArg(name="name", dtype="string"),
+                      SVArg(name="parent", dtype="zsp_component")],
+                return_type="",
+                body_lines=["super.new(name, parent);"]),
+                       SVFunctionDecl(
+                name="current",
+                return_type="zsp_executor_dispatch_c",
+                is_static=True,
+                body_lines=[
+                    "zsp_executor_dispatch_c value;",
+                    "if (!$cast(value, executor())) begin",
+                    '  $fatal(1, "active executor does not implement the generated target interface");',
+                    "  return null;",
+                    "end",
+                    "return value;",
+                ])] + dispatch_funcs,
+        ),
+    ]
 
 
 def pss_to_sv(ir_ctx: AstToIrContext) -> List[Any]:
@@ -90,6 +264,8 @@ def pss_to_sv_with_ctx(ir_ctx: AstToIrContext) -> Tuple[List[Any], LoweringConte
         ``mangle_name()`` / ``sv_name_map`` for downstream generation.
     """
     ctx = LoweringContext(ir_ctx=ir_ctx)
+    _reject_unlowered_address_claims(ctx)
+    _configure_executor_lowering(ctx)
     result: List[Any] = []
 
     # Classify IR types, keeping the qualified name from the type_map key
@@ -150,6 +326,10 @@ def pss_to_sv_with_ctx(ir_ctx: AstToIrContext) -> Tuple[List[Any], LoweringConte
         s.name = qname
         result.append(lower_struct(ctx, s))
         s.name = orig_name
+
+    # Executor target prototypes are a generated, explicit integration
+    # boundary. It must precede user executor components that inherit it.
+    result.extend(_lower_executor_dispatch(ctx))
 
     # 3. Import interfaces
     for qname, comp in components:

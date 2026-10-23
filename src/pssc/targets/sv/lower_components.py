@@ -18,6 +18,7 @@ from zuspec.be.sv.ir.sv import (
 
 from .context import LoweringContext
 from .lower_types import _resolve_super
+from .lower_stmts import lower_stmt
 
 
 def lower_component(ctx: LoweringContext, dtype: ir.DataTypeComponent) -> SVClass:
@@ -35,10 +36,23 @@ def lower_component(ctx: LoweringContext, dtype: ir.DataTypeComponent) -> SVClas
             extends = _resolve_super(ctx, dtype.super.ref_name)
         elif hasattr(dtype.super, 'name') and dtype.super.name:
             extends = _resolve_super(ctx, dtype.super.name)
+    is_executor = bool(getattr(dtype, "executor_trait_name", None))
+    if is_executor and getattr(ctx, "executor_target_functions", set()):
+        extends = "zsp_executor_dispatch_c"
 
     # Fields
     fields: List[SVClassField] = []
     ctor_body: List[str] = ["super.new(name, parent);"]
+
+    # The PSS template specialization is retained as lowering metadata. The
+    # native runtime deliberately materializes its one selected trait type,
+    # rather than erasing a trait-dependent constraint into an untyped base.
+    if is_executor:
+        trait_sv = getattr(ctx, "executor_trait_sv", None)
+        if trait_sv is None:
+            raise ValueError(f"executor '{dtype.name}' has no concrete trait type")
+        fields.append(SVClassField(name="trait", dtype=trait_sv))
+        ctor_body.append("trait = new();")
 
     # Import interface field (if the component has import functions)
     import_funcs = [f for f in dtype.functions if getattr(f, 'is_import', False)]
@@ -79,6 +93,17 @@ def lower_component(ctx: LoweringContext, dtype: ir.DataTypeComponent) -> SVClas
         fields.append(SVClassField(name=pool.name, dtype=pool_type))
         ctor_body.append(f'{pool.name} = new({capacity});')
 
+    lifecycle_funcs: List[SVFunctionDecl] = []
+    for func in dtype.functions:
+        if func.name not in ("init_down", "init_up"):
+            continue
+        body = []
+        for stmt in func.body or []:
+            body.extend(lower_stmt(ctx, stmt))
+        lifecycle_funcs.append(SVFunctionDecl(
+            name=func.name, return_type="void", body_lines=body or ["// no-op"]))
+        ctor_body.append(f"{func.name}();")
+
     # Constructor
     ctor = SVFunctionDecl(
         name="new",
@@ -94,5 +119,5 @@ def lower_component(ctx: LoweringContext, dtype: ir.DataTypeComponent) -> SVClas
         name=sv_name,
         extends_name=extends,
         fields=fields,
-        functions=[ctor],
+        functions=[ctor] + lifecycle_funcs,
     )

@@ -667,6 +667,14 @@ class AstToIrTranslator:
                 func = self._translate_function(ctx, child)
                 if func:
                     target_ir.functions.append(func)
+            elif isinstance(child, pss_ast.FunctionPrototype):
+                # A target-function declaration in an ``extend component`` is
+                # a prototype, not a FunctionDefinition. Keep it in the IR:
+                # a backend that cannot bind it must reject it, rather than
+                # silently erasing the executor's target boundary.
+                func = self._translate_function_prototype(ctx, child)
+                if func:
+                    target_ir.functions.append(func)
             elif isinstance(child, pss_ast.Action):
                 # Nested action -- registered under its qualified name, with the
                 # enclosing component recorded as its parent.
@@ -753,11 +761,15 @@ class AstToIrTranslator:
         # parented to the type being extended rather than to nothing.
         self._type_chain_stack.append(parts[-1])
 
+        before_functions = len(getattr(target_ir, "functions", []))
         self._translate_type_body(
             ctx,
             (extend.getChild(i) for i in range(extend.numChildren())),
             target_ir,
             getattr(target_ir, "name", None) or target_name)
+        for func in target_ir.functions[before_functions:]:
+            func.metadata = dict(getattr(func, "metadata", {}) or {})
+            func.metadata["component_extension"] = True
 
         self._type_chain_stack.pop()
 
@@ -918,6 +930,18 @@ class AstToIrTranslator:
             comp.super = ir.DataTypeRef(
                 ref_name=self._linked_type_name(ctx, component.getSuper_t())
                 or super_name)
+        if super_name == "executor_c" and super_elem is not None:
+            params = super_elem.getParams()
+            if params is not None and params.numValues() == 1:
+                value = params.getValue(0)
+                value_type = value.getValue() if value is not None else None
+                trait = self._translate_data_type(ctx, value_type)
+                trait_name = (getattr(trait, "ref_name", None)
+                              or getattr(trait, "name", None))
+                if trait_name:
+                    # DataTypeRef deliberately has a small portable surface;
+                    # this is lowering metadata, not a second type system.
+                    comp.executor_trait_name = trait_name
 
         # Translate children (fields, functions, nested types). Shared with
         # `extend component <this>` -- see _translate_type_body.
@@ -3304,6 +3328,49 @@ class AstToIrTranslator:
         )
 
         return ir_func
+
+    def _translate_function_prototype(self, ctx: AstToIrContext, prototype) -> Optional[ir.Function]:
+        """Translate a body-less component target-function declaration.
+
+        ``FunctionPrototype`` is used by PSS ``extend component`` declarations.
+        It has the same signature surface as a function definition, but no
+        executable body. Keeping the declaration lets a target create an
+        explicit binding boundary instead of mistaking the declaration for a
+        no-op.
+        """
+        name_node = prototype.getName()
+        func_name = (name_node.getId() if isinstance(name_node, pss_ast.ExprId)
+                     else str(name_node))
+        if not func_name:
+            ctx.add_error("Function prototype missing name")
+            return None
+
+        return_type = None
+        rtype = prototype.getRtype()
+        if rtype is not None:
+            return_type = self._translate_data_type(ctx, rtype)
+
+        params = []
+        for i in range(prototype.numParameters()):
+            param = prototype.getParameter(i)
+            if param is None:
+                continue
+            name = param.getName()
+            pname = name.getId() if isinstance(name, pss_ast.ExprId) else str(name)
+            ptype = self._translate_data_type(ctx, param.getType())
+            if ptype is not None:
+                params.append(ir.Arg(arg=pname, annotation=ptype))
+
+        return ir.Function(
+            name=func_name,
+            args=ir.Arguments(args=params),
+            returns=return_type,
+            is_async=False,
+            is_target=bool(prototype.getIs_target()),
+            is_solve=bool(prototype.getIs_solve()),
+            is_invariant=bool(prototype.getIs_pure()),
+            metadata={"component_prototype": True},
+        )
 
     def _translate_exec_scope(self, ctx: AstToIrContext, exec_scope) -> List[ir.Stmt]:
         """Translate an execution scope (function body)

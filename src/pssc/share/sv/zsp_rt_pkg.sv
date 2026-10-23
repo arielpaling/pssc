@@ -53,6 +53,71 @@ package zsp_rt_pkg;
     endclass
 
     // ======================================================================
+    // Executor support
+    //
+    // Generated code uses mangled PSS standard-library names because the
+    // sv-native backend emits one package. A concrete executor binding lives
+    // in generated SV; this runtime owns only identity, grouping, and the
+    // current target context.
+    // ======================================================================
+    class executor_pkg__executor_trait_s;
+    endclass
+
+    class executor_pkg__executor_base_c extends zsp_component;
+        static executor_pkg__executor_base_c current_executor;
+
+        function new(string name = "", zsp_component parent = null);
+            super.new(name, parent);
+        endfunction
+
+        static function void set_current(executor_pkg__executor_base_c value);
+            current_executor = value;
+        endfunction
+
+        static function executor_pkg__executor_base_c current();
+            return current_executor;
+        endfunction
+    endclass
+
+    class executor_pkg__executor_c extends executor_pkg__executor_base_c;
+        function new(string name = "", zsp_component parent = null);
+            super.new(name, parent);
+        endfunction
+    endclass
+
+    class executor_pkg__executor_group_c extends zsp_component;
+        executor_pkg__executor_base_c executors[$];
+
+        function new(string name = "", zsp_component parent = null);
+            super.new(name, parent);
+        endfunction
+
+        function void add_executor(executor_pkg__executor_base_c value);
+            executors.push_back(value);
+        endfunction
+
+        function int size();
+            return executors.size();
+        endfunction
+
+        function executor_pkg__executor_base_c get(int index);
+            if (index < 0 || index >= executors.size()) begin
+                $fatal(1, "executor group index %0d is unbound", index);
+                return null;
+            end
+            return executors[index];
+        endfunction
+    endclass
+
+    function automatic executor_pkg__executor_base_c executor();
+        executor_pkg__executor_base_c value;
+        value = executor_pkg__executor_base_c::current();
+        if (value == null)
+            $fatal(1, "PSS executor() used without a bound executor context");
+        return value;
+    endfunction
+
+    // ======================================================================
     // pss_action_run_if -- IP-independent generic-run facade (Command pattern).
     //
     // A generated <Action>_runner binds one export-API entry point (and, in
@@ -94,6 +159,9 @@ package zsp_rt_pkg;
     // ======================================================================
     class zsp_resource;
         int instance_id;
+    endclass
+
+    class executor_pkg__executor_claim_s extends zsp_resource;
     endclass
 
     class zsp_buffer;

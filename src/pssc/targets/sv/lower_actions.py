@@ -179,6 +179,18 @@ def _resolve_dtype(ctx: LoweringContext, dtype):
     return target if target is not None else dtype
 
 
+def _action_field_names(ctx: LoweringContext, dtype) -> set[str]:
+    """Return fields declared by an action and all of its action bases."""
+    names: set[str] = set()
+    seen: set[int] = set()
+    current = dtype
+    while isinstance(current, ir.DataTypeClass) and id(current) not in seen:
+        seen.add(id(current))
+        names.update(field.name for field in current.fields)
+        current = _resolve_dtype(ctx, getattr(current, "super", None))
+    return names
+
+
 def _prefix_constraint(expr: str, fields: List[ir.Field], prefix: str,
                        ctx: LoweringContext) -> str:
     """Qualify local field references in a constraint copied into a parent.
@@ -193,7 +205,9 @@ def _prefix_constraint(expr: str, fields: List[ir.Field], prefix: str,
     """
     for field in sorted(fields, key=lambda item: len(ctx.safe_field_name(item.name)), reverse=True):
         name = ctx.safe_field_name(field.name)
-        expr = re.sub(rf"(?<![A-Za-z0-9_$]){re.escape(name)}(?![A-Za-z0-9_$])",
+        # Only bare local names are lifted. A member after ``.`` is already
+        # qualified by its owning child action and must not be prefixed again.
+        expr = re.sub(rf"(?<![A-Za-z0-9_$.]){re.escape(name)}(?![A-Za-z0-9_$])",
                       f"{prefix}.{name}", expr)
     return expr
 
@@ -346,7 +360,7 @@ def lower_action(
     has_covergroup = bool(cg_lines)
 
     # Build known field name set for constraint validation
-    _known_fields = {f.name for f in dtype.fields}
+    _known_fields = _action_field_names(ctx, dtype)
     _known_fields.update(f.name for f in resource_fields)
 
     for func in dtype.functions:

@@ -116,6 +116,18 @@ def lower_struct(ctx: LoweringContext, dtype: ir.DataTypeStruct) -> SVClass:
             is_randc=is_randc,
         ))
 
+    # ``executor_claim_s<TRAIT>`` is a template base. The selected concrete
+    # trait is recorded by the component-specialization admission pass; the
+    # class-based SV runtime needs an actual handle to solve and inspect.
+    super_name = getattr(getattr(dtype, "super", None), "ref_name", None)
+    if super_name in ("executor_claim_s", "executor_pkg::executor_claim_s"):
+        trait_sv = getattr(ctx, "executor_trait_sv", None)
+        if trait_sv is None:
+            raise ValueError(
+                f"executor claim '{dtype.name}' has no concrete executor trait type")
+        extends = "zsp_resource"
+        fields.insert(0, SVClassField(name="trait", dtype=trait_sv))
+
     # Constraints
     constraints: List[SVConstraintBlock] = []
     # Since nested value-struct enum leaves are emitted as scalar storage,
@@ -135,11 +147,17 @@ def lower_struct(ctx: LoweringContext, dtype: ir.DataTypeStruct) -> SVClass:
         if exprs is not None:
             constraints.append(SVConstraintBlock(name=func.name, exprs=exprs))
 
+    functions: List[SVFunctionDecl] = []
+    if super_name in ("executor_claim_s", "executor_pkg::executor_claim_s"):
+        functions.append(SVFunctionDecl(
+            name="new", return_type="", body_lines=["trait = new();"]))
+
     return SVClass(
         name=sv_name,
         extends_name=extends,
         fields=fields,
         constraints=constraints,
+        functions=functions,
     )
 
 

@@ -117,6 +117,20 @@ def lower_expr(ctx: LoweringContext, expr: ir.Expr) -> str:
         return _lower_range(ctx, expr)
 
     if isinstance(expr, ir.ExprAttribute):
+        # PSS ``executor().f()`` dispatches a target-function extension on
+        # executor_base_c. The native runtime keeps the active executor as its
+        # portable base type; cast only at this explicitly generated target
+        # boundary so an unbound binding fails instead of being redirected.
+        executor_call = (
+            isinstance(expr.value, ir.ExprCall)
+            and ((isinstance(expr.value.func, ir.ExprRefUnresolved)
+                  and expr.value.func.name == "executor")
+                 or (isinstance(expr.value.func, ir.ExprAttribute)
+                     and isinstance(expr.value.func.value, ir.TypeExprRefSelf)
+                     and expr.value.func.attr == "executor")))
+        if (executor_call
+                and expr.attr in getattr(ctx, "executor_target_functions", set())):
+            return f"zsp_executor_dispatch_c::current().{expr.attr}"
         val = lower_expr(ctx, expr.value)
         if val in ("", "self", "this"):
             return expr.attr
