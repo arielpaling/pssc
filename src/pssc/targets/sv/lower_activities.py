@@ -165,38 +165,46 @@ def _get_resource_claims(
         return []
 
     claims: List[ResourceClaim] = []
-    for field in getattr(dtype, "fields", []):
-        if field.kind not in (FieldKind.Lock, FieldKind.Share):
-            continue
-        # Resolve the pool name by finding the pool on the owning component
-        # whose element type matches this field's type.
-        elem_type_name = getattr(field.datatype, 'ref_name', None) or getattr(field.datatype, 'name', None)
-        pool_field_name = f"{field.name}_pool"  # fallback
-        if elem_type_name and ctx.ir_ctx:
-            parent_comp_name = ctx.ir_ctx.parent_comp_names.get(action_type_name)
-            if parent_comp_name is None:
-                # Try suffix match
-                short = action_type_name.split("::")[-1]
-                for k, v in ctx.ir_ctx.parent_comp_names.items():
-                    if k == action_type_name or k.endswith(f"::{short}"):
-                        parent_comp_name = v
-                        break
-            if parent_comp_name:
-                comp_dtype = ctx.ir_ctx.type_map.get(parent_comp_name)
-                for pool in getattr(comp_dtype, 'pools', []):
-                    if pool.element_type_name == elem_type_name:
-                        pool_field_name = pool.name
-                        break
-        pool_expr = f"{action_var}.comp.{pool_field_name}"
-        id_field = f"{field.name}_instance_id"
-        claim_kind = "lock" if field.kind == FieldKind.Lock else "share"
-        claims.append(ResourceClaim(
-            field_name=field.name,
-            pool_expr=pool_expr,
-            id_field=id_field,
-            claim_kind=claim_kind,
-            is_head=is_head,
-        ))
+    seen_types = set()
+    while dtype is not None and id(dtype) not in seen_types:
+        seen_types.add(id(dtype))
+        fields = getattr(dtype, "fields", [])
+        for field in fields:
+            if field.kind not in (FieldKind.Lock, FieldKind.Share):
+                continue
+            # Resolve the pool name by finding the pool on the owning component
+            # whose element type matches this field's type.
+            elem_type_name = getattr(field.datatype, 'ref_name', None) or getattr(field.datatype, 'name', None)
+            pool_field_name = f"{field.name}_pool"  # fallback
+            if elem_type_name and ctx.ir_ctx:
+                parent_comp_name = ctx.ir_ctx.parent_comp_names.get(action_type_name)
+                if parent_comp_name is None:
+                    # Try suffix match
+                    short = action_type_name.split("::")[-1]
+                    for k, v in ctx.ir_ctx.parent_comp_names.items():
+                        if k == action_type_name or k.endswith(f"::{short}"):
+                            parent_comp_name = v
+                            break
+                if parent_comp_name:
+                    comp_dtype = ctx.ir_ctx.type_map.get(parent_comp_name)
+                    for pool in getattr(comp_dtype, 'pools', []):
+                        if pool.element_type_name == elem_type_name:
+                            pool_field_name = pool.name
+                            break
+            pool_expr = f"{action_var}.comp.{pool_field_name}"
+            id_field = f"{field.name}_instance_id"
+            claim_kind = "lock" if field.kind == FieldKind.Lock else "share"
+            claims.append(ResourceClaim(
+                field_name=field.name,
+                pool_expr=pool_expr,
+                id_field=id_field,
+                claim_kind=claim_kind,
+                is_head=is_head,
+            ))
+
+        super_ref = getattr(dtype, 'super', None)
+        super_name = getattr(super_ref, 'ref_name', None)
+        dtype = _resolve_type(ctx, super_name) if super_name else None
     return claims
 
 def _lower_dpi_chain(
@@ -334,7 +342,9 @@ def _lower_activity_impl(
 
     lines: List[str] = []
 
-    # Emit local variable declarations for buffer flow objects
+    # Emit local flow-object declarations. Streams are channels because their
+    # producer and consumer may run concurrently; buffers and state remain
+    # direct values in this local scope.
     if fctx is not None:
         seen_vars: set = set()
         for b_list in fctx.producer.values():
@@ -343,14 +353,22 @@ def _lower_activity_impl(
                     var_name = fctx.get_flow_var(b)
                     if var_name not in seen_vars:
                         seen_vars.add(var_name)
-                        lines.append(f"{b.flow_type} {var_name};")
+                        if b.flow_kind == "stream":
+                            lines.append(
+                                f"zsp_stream_channel #({b.flow_type}) {var_name} = new();")
+                        else:
+                            lines.append(f"{b.flow_type} {var_name};")
         for b_list in fctx.consumer.values():
             for b in b_list:
                 if b.flow_kind in ("buffer", "stream", "state") and b.flow_type:
                     var_name = fctx.get_flow_var(b)
                     if var_name not in seen_vars:
                         seen_vars.add(var_name)
-                        lines.append(f"{b.flow_type} {var_name};")
+                        if b.flow_kind == "stream":
+                            lines.append(
+                                f"zsp_stream_channel #({b.flow_type}) {var_name} = new();")
+                        else:
+                            lines.append(f"{b.flow_type} {var_name};")
 
     # Emit DPI chain blocks first (they replace individual traversals)
     emitted_chains: set = set()
@@ -432,7 +450,7 @@ def _lower_activity_stmt(
         return ["super.activity();"]
 
     if isinstance(stmt, ir.ActivityParallel):
-        return _lower_parallel(ctx, stmt, comp_expr)
+        return _lower_parallel(ctx, stmt, comp_expr, fctx)
 
     if isinstance(stmt, ir.ActivityConstraint):
         # Inline constraints in activity context are informational
@@ -474,6 +492,8 @@ def _lower_traversal(
     - Producer: capture output into local variable after body()
     """
     handle = trav.handle
+    effective_comp_expr = (lower_expr(ctx, trav.comp_expr)
+                           if trav.comp_expr is not None else comp_expr)
     lines = ["begin"]
 
     # --- Consumer: inject buffer inputs before pre_solve ---
@@ -481,14 +501,17 @@ def _lower_traversal(
     if fctx is not None:
         for b in fctx.consumer.get(handle, []):
             if b.flow_kind in ("buffer", "stream", "state"):
-                has_flow_input = True
                 var_name = fctx.get_flow_var(b)
                 lines.append(f"  // inject flow input: {b.consumer_field} from {var_name}")
-                lines.append(f"  {handle}.{b.consumer_field} = {var_name};")
+                if b.flow_kind == "stream":
+                    lines.append(f"  {var_name}.get({handle}.{b.consumer_field});")
+                else:
+                    has_flow_input = True
+                    lines.append(f"  {handle}.{b.consumer_field} = {var_name};")
 
     if has_flow_input:
         lines.append(f"  {handle}.constraint_mode(1);")
-    lines.append(f"  {handle}.comp = {comp_expr};")
+    lines.append(f"  {handle}.comp = {effective_comp_expr};")
     lines.append(f"  {handle}.pre_solve();")
 
     # Build with-constraints: inline + buffer/stream consumer pinning.
@@ -496,7 +519,7 @@ def _lower_traversal(
     with_parts: List[str] = []
     if fctx is not None:
         for b in fctx.consumer.get(handle, []):
-            if b.flow_kind in ("buffer", "stream"):
+            if b.flow_kind == "buffer":
                 _fv = fctx.get_flow_var(b)
                 with_parts.append(f"{b.consumer_field} == {_fv}")
     if trav.inline_constraints:
@@ -528,11 +551,14 @@ def _lower_traversal(
         for b in fctx.producer.get(handle, []):
             if b.flow_kind in ("buffer", "stream", "state"):
                 var_name = fctx.get_flow_var(b)
-                lines.append(f"  {var_name} = {handle}.{b.producer_field};")
+                if b.flow_kind == "stream":
+                    lines.append(f"  {var_name}.put({handle}.{b.producer_field});")
+                else:
+                    lines.append(f"  {var_name} = {handle}.{b.producer_field};")
 
     lines.append("end")
     # Prepend trace macro (outside begin/end so it shows before the block)
-    return wrap_traversal_with_trace(handle, comp_expr, lines)
+    return wrap_traversal_with_trace(handle, effective_comp_expr, lines)
 
 
 def _lower_anon_traversal(
@@ -554,8 +580,9 @@ def _lower_anon_traversal(
     # When the action type has an instance-path prefix (e.g. "enc::encode_pipeline"
     # where "enc" is a field on the current component), the sub-component reference
     # is used instead of the direct comp_expr.
-    effective_comp_expr = comp_expr
-    if "::" in trav.action_type and ctx.ir_ctx is not None:
+    effective_comp_expr = (lower_expr(ctx, trav.comp_expr)
+                           if trav.comp_expr is not None else comp_expr)
+    if trav.comp_expr is None and "::" in trav.action_type and ctx.ir_ctx is not None:
         parts = trav.action_type.split("::")
         instance_parts = parts[:-1]  # everything before the action name
         # Verify that the first segment is an instance name (not a type-map prefix)
@@ -576,7 +603,10 @@ def _lower_anon_traversal(
             if b.flow_kind in ("buffer", "stream", "state"):
                 flow_var = fctx.get_flow_var(b)
                 lines.append(f"  // flow input: {b.consumer_field} <- {flow_var}")
-                lines.append(f"  {var_name}.{b.consumer_field} = {flow_var};")
+                if b.flow_kind == "stream":
+                    lines.append(f"  {flow_var}.get({var_name}.{b.consumer_field});")
+                else:
+                    lines.append(f"  {var_name}.{b.consumer_field} = {flow_var};")
 
     # Note: do NOT call rand_mode(0) on state flow objects — VCS applies it class-wide.
 
@@ -588,7 +618,7 @@ def _lower_anon_traversal(
     with_parts: List[str] = []
     if fctx is not None:
         for b in fctx.consumer.get(var_name, []):
-            if b.flow_kind in ("buffer", "stream"):
+            if b.flow_kind == "buffer":
                 flow_var = fctx.get_flow_var(b)
                 with_parts.append(f"{b.consumer_field} == {flow_var}")
     if trav.inline_constraints:
@@ -614,7 +644,10 @@ def _lower_anon_traversal(
         for b in fctx.producer.get(var_name, []):
             if b.flow_kind in ("buffer", "stream", "state"):
                 flow_var = fctx.get_flow_var(b)
-                lines.append(f"  {flow_var} = {var_name}.{b.producer_field};")
+                if b.flow_kind == "stream":
+                    lines.append(f"  {flow_var}.put({var_name}.{b.producer_field});")
+                else:
+                    lines.append(f"  {flow_var} = {var_name}.{b.producer_field};")
 
     # --- Resource release (after body) ---
     for rel_line in emit_resource_release(resource_claims, var_name):

@@ -1250,12 +1250,15 @@ class AstToIrTranslator:
                         if eid and hasattr(eid, 'getId'):
                             type_parts.append(eid.getId())
                 handle_type_name = '::'.join(type_parts) if type_parts else None
+                linked_type_name = (self._linked_type_name(ctx, type_id)
+                                    if type_id is not None else None)
                 if handle_name and handle_type_name:
                     from zuspec.ir.core.fields import FieldKind as _HFK
                     _hf = ir.Field(
                         name=handle_name,
                         kind=_HFK.Field,
-                        datatype=ir.DataTypeRef(ref_name=handle_type_name),
+                        datatype=ir.DataTypeRef(
+                            ref_name=linked_type_name or handle_type_name),
                     )
                     action_ir.fields.append(_hf)
             elif isinstance(child, pss_ast.FieldClaim):
@@ -1505,7 +1508,20 @@ class AstToIrTranslator:
         if handle is None:
             return None
         inline_constraints = self._extract_inline_constraints(ctx, node)
-        return ir.ActivityTraversal(handle=handle, inline_constraints=inline_constraints)
+        comp_expr, inline_constraints = self._extract_comp_expr(inline_constraints)
+
+        type_qname = None
+        owner = ctx.current_scope()
+        for field in getattr(owner, 'fields', []):
+            if field.name == handle:
+                type_qname = getattr(field.datatype, 'ref_name', None)
+                break
+        return ir.ActivityTraversal(
+            handle=handle,
+            type_qname=type_qname,
+            comp_expr=comp_expr,
+            inline_constraints=inline_constraints,
+        )
 
     def _translate_type_traversal(
         self,

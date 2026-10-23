@@ -389,8 +389,6 @@ def lower_action(
                         fname = ctx.safe_field_name(f.name)
                         func_lines.append(f"if ({fname} == null) {fname} = new();")
                         func_lines.append(f"{fname}.pre_solve();")
-                        if _action_has_flow_input(ctx, f):
-                            func_lines.append(f"{fname}.constraint_mode(0);")
             if not func_lines:
                 func_lines = ["// no-op"]
             # Sample covergroup in post_solve
@@ -419,6 +417,12 @@ def lower_action(
         # parent solve domain.
         if not isinstance(child, ir.DataTypeClass):
             continue
+        # A stream/input child is populated by execution-time flow wiring.
+        # It is deliberately outside this compound action's solve domain, so
+        # lifting its constraints creates solver-visible dotted members with
+        # no corresponding random variable in Verilator.
+        if _action_has_flow_input(ctx, field):
+            continue
         lifted = _lift_value_constraints(
             ctx, child, ctx.safe_field_name(field.name), {id(dtype)})
         if lifted:
@@ -446,8 +450,6 @@ def lower_action(
                 fname = ctx.safe_field_name(f.name)
                 ctor_lines.append(f"if ({fname} == null) {fname} = new();")
                 ctor_lines.append(f"{fname}.pre_solve();")
-                if _action_has_flow_input(ctx, f):
-                    ctor_lines.append(f"{fname}.constraint_mode(0);")
         fields_to_construct = output_fields + handle_fields  # for empty check
         if fields_to_construct:
             pass  # ctor_lines already built above

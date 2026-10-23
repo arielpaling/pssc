@@ -18,10 +18,13 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import os
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-VERILATOR = shutil.which("verilator")
+# CI can use its default tool, while an integration owner may pin an explicit
+# binary to match the simulator used by the generated collateral.
+VERILATOR = os.environ.get("PSSC_VERILATOR_BIN") or shutil.which("verilator")
 HAVE_VERILATOR = VERILATOR is not None
 
 # Warnings that are noise for generated constrained-random class code; we care

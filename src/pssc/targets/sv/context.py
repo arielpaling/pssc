@@ -230,14 +230,10 @@ class LoweringContext:
             return self.mangle_name(dtype.ref_name)
 
         if isinstance(dtype, (ir.DataTypeStruct, ir.DataTypeClass, ir.DataTypeComponent)):
-            # Same canonical lookup for inline type objects
-            if self.ir_ctx is not None and dtype.name:
-                target = self.ir_ctx.type_map.get(dtype.name)
-                if target is not None:
-                    for k, m in self.sv_name_map.items():
-                        if id(self.ir_ctx.type_map.get(k)) == id(target):
-                            return m
-            return self.mangle_name(dtype.name) if dtype.name else "int"
+            # The IR completion pass replaces an action-handle DataTypeRef
+            # with its class.  Preserve the class' canonical linked name here;
+            # using its short ``name`` loses the owning component prefix.
+            return self.resolve_sv_class_name(dtype.name) if dtype.name else "int"
 
         # Fallback
         return "int"
