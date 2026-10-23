@@ -106,6 +106,102 @@ def test_sv_native_named_child_component_constraint_routes_to_child(tmp_path):
     assert "UH0_COMP_ENDPOINT=11" not in log
 
 
+_COMPONENT_IMPORT_BINDING_PSS = """
+package tb_api {
+  import target function void mark(bit[8] value);
+}
+
+component uart_endpoint_c {
+  import tb_api::*;
+  int endpoint_id;
+
+  action run {
+    exec body { mark(comp.endpoint_id); }
+  }
+}
+
+component pss_top {
+  uart_endpoint_c uart_a, uart_b;
+
+  action Root {
+    uart_endpoint_c::run child;
+    activity {
+      child with { comp == this.comp.uart_a; };
+    }
+  }
+}
+"""
+
+
+_COMPONENT_IMPORT_BINDING_TB = """\
+module tb;
+  import zsp_rt_pkg::*;
+  import zsp_gen_pkg::*;
+  class good_import extends import_api_base;
+    virtual task mark(bit [7:0] value);
+      $display("UH2_COMPONENT_ENDPOINT=%0d", value);
+    endtask
+  endclass
+  class wrong_import extends import_api_base;
+    virtual task mark(bit [7:0] value);
+      $fatal(1, "UH2_WRONG_CHILD=%0d", value);
+    endtask
+  endclass
+  initial begin
+    export_api_impl ep = new(null);
+    good_import good = new();
+    wrong_import wrong = new();
+    ep.uart_a.endpoint_id = 11;
+    ep.uart_b.endpoint_id = 22;
+    ep.uart_a.import_if = good;
+    ep.uart_b.import_if = wrong;
+    ep.Root();
+    $finish;
+  end
+endmodule
+"""
+
+
+@pytest.mark.skipif(not HAVE_VERILATOR, reason="verilator not available")
+def test_sv_native_child_component_import_binding_is_explicit_and_bites(tmp_path):
+    """A target binding owns child imports; a swapped child trips its adapter."""
+    out = _compile_native(
+        tmp_path, _COMPONENT_IMPORT_BINDING_PSS, _COMPONENT_IMPORT_BINDING_TB)
+    generated = (out / "zsp_gen_pkg.sv").read_text()
+    endpoint = re.search(
+        r"class uart_endpoint_c.*?endclass", generated, flags=re.DOTALL)
+    assert endpoint is not None
+    assert "import_api_if import_if;" in endpoint.group(0)
+    assert "child.comp = comp.uart_a;" in generated
+
+    rc, log = verilator_build_run(
+        out,
+        top_module="tb",
+        files=["zsp_rt_pkg.sv", "zsp_gen_pkg.sv", "tb.sv"],
+    )
+    assert rc == 0, log
+    assert "UH2_COMPONENT_ENDPOINT=11" in log
+    assert "UH2_WRONG_CHILD" not in log
+
+    # This is a bite control, rather than an expected-failure-only smoke: the
+    # mutation routes execution to a distinctly bound endpoint and must reach
+    # its named rejecting adapter.
+    bad_out = tmp_path / "bad_child_import_target"
+    _copy_generated_sources(out, bad_out)
+    generated = (bad_out / "zsp_gen_pkg.sv").read_text()
+    mutated = generated.replace("child.comp = comp.uart_a;",
+                                "child.comp = comp.uart_b;")
+    assert mutated != generated
+    (bad_out / "zsp_gen_pkg.sv").write_text(mutated)
+    rc, log = verilator_build_run(
+        bad_out,
+        top_module="tb",
+        files=["zsp_rt_pkg.sv", "zsp_gen_pkg.sv", "tb.sv"],
+    )
+    assert rc != 0, log
+    assert "UH2_WRONG_CHILD=22" in log
+
+
 _SERIALIZED_EXECUTOR_PSS = """
 package tb_api {
   import target function void mark(bit[3] value);

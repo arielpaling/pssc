@@ -30,6 +30,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
+import zuspec.ir.core as ir
+
 from zuspec.be.sv.ir.sv import (
     SVArg,
     SVClass,
@@ -320,13 +322,23 @@ def build_oo_api_nodes(
             f"found among generated SV nodes."
         )
     has_imports = bool(import_funcs)
+    # Package-scope imports are callable from an action running on any PSS
+    # component, not only an export root.  Give each component without a
+    # component-local import surface the package API handle so an integration
+    # binding can choose which child owns an endpoint.  Propagating one root
+    # handle through the tree here would hide a wrong-child binding; ownership
+    # belongs to the target binding instead.
+    component_names = {
+        ctx.mangle_name(dtype.name)
+        for dtype in (ctx.ir_ctx.type_map.values() if ctx and ctx.ir_ctx else [])
+        if isinstance(dtype, ir.DataTypeComponent) and dtype.name
+    }
     for n in sv_nodes:
+        if (has_imports and isinstance(n, SVClass) and n.name in component_names
+                and not any(f.name == "import_if" for f in n.fields)):
+            n.fields.append(SVClassField(name="import_if", dtype=IMPORT_API_IF))
         if isinstance(n, SVClass) and n.name in root_comp_names:
             _augment_root_factory(n)
-            # Give the root component a handle to the import API so action
-            # exec bodies can reach it via comp.import_if.<fn>(...).
-            if has_imports and not any(f.name == "import_if" for f in n.fields):
-                n.fields.append(SVClassField(name="import_if", dtype=IMPORT_API_IF))
 
     prefix = [_lower_import_api_if(ctx, import_funcs)]
     if has_imports:
