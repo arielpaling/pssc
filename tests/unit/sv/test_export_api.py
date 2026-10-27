@@ -31,6 +31,7 @@ def test_atomic_export_api_shape():
     assert "implements factory_if" in txt
     assert "static function pss_top type_id();" in txt
     assert "class export_api_impl extends pss_top implements export_api_if;" in txt
+    assert "virtual task Entry();" in txt
     # the impl IS the component: comp == this, atomic -> body()
     assert "root.comp = this;" in txt
     assert "root.body();" in txt

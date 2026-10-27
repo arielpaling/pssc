@@ -190,7 +190,12 @@ def _lower_export_api_impl(actions: List[ExportAction],
             # comp == this: the impl is the component.
             body = emit_root_action_lifecycle(
                 a.action_sv, a.has_activity, indent="", comp_ref="this")
-            cls.tasks.append(SVTaskDecl(name=a.task_name, body_lines=body))
+            # Some strict simulators require an implementation of an
+            # interface-class pure virtual task to be declared virtual too.
+            # The export task is an interface implementation, not merely a
+            # helper task, so preserve that contract in the emitted class.
+            cls.tasks.append(SVTaskDecl(
+                name=a.task_name, is_virtual=True, body_lines=body))
         return cls
 
     # Fallback: export actions span multiple components -> construct a fresh
@@ -209,7 +214,8 @@ def _lower_export_api_impl(actions: List[ExportAction],
             body.append("top.import_if = m_imp;")
         body.extend(emit_root_action_lifecycle(a.action_sv, a.has_activity,
                                                 indent=""))
-        cls.tasks.append(SVTaskDecl(name=a.task_name, body_lines=body))
+        cls.tasks.append(SVTaskDecl(
+            name=a.task_name, is_virtual=True, body_lines=body))
     return cls
 
 
@@ -328,9 +334,10 @@ def build_oo_api_nodes(
     # binding can choose which child owns an endpoint.  Propagating one root
     # handle through the tree here would hide a wrong-child binding; ownership
     # belongs to the target binding instead.
+    ir_ctx = getattr(ctx, "ir_ctx", None)
     component_names = {
         ctx.mangle_name(dtype.name)
-        for dtype in (ctx.ir_ctx.type_map.values() if ctx and ctx.ir_ctx else [])
+        for dtype in (ir_ctx.type_map.values() if ir_ctx else [])
         if isinstance(dtype, ir.DataTypeComponent) and dtype.name
     }
     for n in sv_nodes:

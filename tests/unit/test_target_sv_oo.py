@@ -57,3 +57,20 @@ def test_custom_package_name(tmp_path):
     assert code == 0
     assert (out / "my_pkg.sv").exists()
     assert "package my_pkg;" in (out / "my_pkg.sv").read_text()
+
+
+def test_import_api_declares_user_enum_before_its_prototype(tmp_path):
+    """An OO import prototype may use a PSS enum on strict SV compilers."""
+    src = tmp_path / "m.pss"
+    src.write_text(
+        "enum source_e { TIMER = 0, UART = 1 }\n"
+        "import target function void service(source_e source);\n"
+        "component pss_top {\n"
+        "  action Entry { exec body { service(TIMER); } }\n"
+        "}\n")
+    out = tmp_path / "out"
+    code = main(["compile", str(src), "-t", "sv-native", "-o", str(out), "-q"])
+    assert code == 0
+    pkg = (out / "zsp_gen_pkg.sv").read_text()
+    assert pkg.index("} source_e;") < pkg.index("interface class import_api_if")
+    assert "pure virtual task service(input source_e source);" in pkg

@@ -327,6 +327,12 @@ def pss_to_sv_with_ctx(ir_ctx: AstToIrContext) -> Tuple[List[Any], LoweringConte
         result.append(lower_struct(ctx, s))
         s.name = orig_name
 
+    # The OO projection adds its package-scoped import API after this lowering
+    # pass.  That API may use any PSS data type in its method signatures, so
+    # retain the boundary after every user enum/struct declaration.  A caller
+    # must insert the API after this prefix, before component definitions.
+    ctx.user_type_node_count = len(result)
+
     # Executor target prototypes are a generated, explicit integration
     # boundary. It must precede user executor components that inherit it.
     result.extend(_lower_executor_dispatch(ctx))

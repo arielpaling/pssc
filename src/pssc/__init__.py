@@ -314,7 +314,12 @@ def _generate_sv_from_ctx(ir_ctx: AstToIrContext, output_dir: str, **options) ->
         prefix, suffix = build_oo_api_nodes(
             sv_nodes, specs, ctx=ctx,
             import_funcs=getattr(ir_ctx, "import_functions", None))
-        sv_nodes = prefix + sv_nodes + suffix
+        # An import prototype can use a user enum or struct.  SystemVerilog
+        # requires that data type to be declared before the interface-class
+        # prototype; keeping the API ahead of the remaining component nodes
+        # preserves the existing component dependency order.
+        type_count = ctx.user_type_node_count
+        sv_nodes = sv_nodes[:type_count] + prefix + sv_nodes[type_count:] + suffix
     else:
         # Legacy standalone harness projection (zsp_test_top). Resolve the root
         # from the explicit PSS name, else auto-detect it.
