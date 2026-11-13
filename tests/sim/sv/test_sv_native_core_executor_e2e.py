@@ -169,6 +169,51 @@ endmodule
 """
 
 
+_NAMED_LOCKED_EXECUTOR_PSS = """
+import executor_pkg::*;
+
+struct named_lock_trait_s : executor_trait_s {}
+component named_lock_executor_c : executor_c<named_lock_trait_s> {}
+
+extend component executor_base_c {
+  target function void mark_executor(bit[3] marker);
+  target function void hold_executor();
+}
+
+resource named_lock_context_r : executor_claim_s<named_lock_trait_s> {}
+
+component pss_top {
+  named_lock_executor_c executor_instance;
+  executor_group_c<named_lock_trait_s> executors;
+  pool [1] named_lock_context_r contexts;
+  bind contexts *;
+
+  exec init_down { executors.add_executor(executor_instance); }
+
+  abstract action serialized_step { lock named_lock_context_r core_ctx; }
+  action one : serialized_step {
+    exec body {
+      executor().mark_executor(1);
+      executor().hold_executor();
+      executor().mark_executor(2);
+    }
+  }
+  action two : serialized_step {
+    exec body {
+      executor().mark_executor(3);
+      executor().hold_executor();
+      executor().mark_executor(4);
+    }
+  }
+  action Root {
+    one first;
+    two second;
+    activity { parallel { first; second; } }
+  }
+}
+"""
+
+
 _NESTED_POLICY_PSS = """
 component pss_top {
   action checkpoint {
@@ -273,6 +318,45 @@ def test_sv_native_executor_claim_lock_serializes_target_calls(tmp_path):
     mutated = re.sub(
         r"(?m)^(\s*).*\.contexts\.(?:lock|unlock)\([^\n]+\);$",
         r"\1// C0 mutation: executor-context lock omitted", generated)
+    assert mutated != generated
+    (bad_out / "zsp_gen_pkg.sv").write_text(mutated)
+    rc, log = verilator_build_run(
+        bad_out,
+        top_module="tb",
+        files=["zsp_rt_pkg.sv", "zsp_gen_pkg.sv", "tb.sv"],
+    )
+    assert rc == 0, log
+    marks = [line.rsplit("=", 1)[1] for line in log.splitlines()
+             if line.startswith("C0_LOCK_MARK=")]
+    assert marks in (["1", "3", "2", "4"], ["3", "1", "4", "2"]), log
+
+
+def test_sv_native_named_executor_claim_lock_serializes_target_calls(tmp_path):
+    """Named child traversals must acquire inherited executor claims too."""
+    out = _compile_native(tmp_path, _NAMED_LOCKED_EXECUTOR_PSS,
+                          _LOCKED_EXECUTOR_TB)
+    generated = (out / "zsp_gen_pkg.sv").read_text()
+    assert "first.comp.contexts.lock(first.core_ctx_instance_id);" in generated
+    assert "second.comp.contexts.lock(second.core_ctx_instance_id);" in generated
+
+    rc, log = verilator_build_run(
+        out,
+        top_module="tb",
+        files=["zsp_rt_pkg.sv", "zsp_gen_pkg.sv", "tb.sv"],
+    )
+    assert rc == 0, log
+    marks = [line.rsplit("=", 1)[1] for line in log.splitlines()
+             if line.startswith("C0_LOCK_MARK=")]
+    assert marks in (["1", "2", "3", "4"], ["3", "4", "1", "2"]), log
+
+    bad_out = tmp_path / "missing_named_executor_lock"
+    bad_out.mkdir()
+    for name in ("zsp_rt_pkg.sv", "zsp_gen_pkg.sv", "tb.sv"):
+        shutil.copy(out / name, bad_out / name)
+    generated = (bad_out / "zsp_gen_pkg.sv").read_text()
+    mutated = re.sub(
+        r"(?m)^(\s*).*\.contexts\.(?:lock|unlock)\([^\n]+\);$",
+        r"\1// named executor-context lock omitted", generated)
     assert mutated != generated
     (bad_out / "zsp_gen_pkg.sv").write_text(mutated)
     rc, log = verilator_build_run(

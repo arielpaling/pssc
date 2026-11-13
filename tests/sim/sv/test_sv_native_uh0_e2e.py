@@ -383,6 +383,65 @@ endmodule
 """
 
 
+_BUFFER_PSS = """
+package tb_api {
+  import target function void observe(bit[8] value);
+}
+
+buffer session_s {
+  rand bit[8] value;
+}
+
+component pss_top {
+  import tb_api::*;
+  pool session_s sessions;
+  bind sessions *;
+
+  action producer {
+    output session_s session;
+    constraint session_value { session.value == 8'ha5; }
+  }
+
+  action consumer {
+    input session_s session;
+    exec body { observe(session.value); }
+  }
+
+  action Root {
+    producer p;
+    consumer c;
+    activity {
+      p;
+      c;
+      bind p.session c.session;
+    }
+  }
+}
+"""
+
+
+_BUFFER_TB = """\
+module tb;
+  import zsp_rt_pkg::*;
+  import zsp_gen_pkg::*;
+  class observe_impl #(type BaseT) extends BaseT;
+    virtual task observe(bit [7:0] value);
+      if (value != 8'ha5) $fatal(1, "PSSC_BUFFER_ROUTE=%0h", value);
+      $display("PSSC_BUFFER_VALUE=%0d", value);
+    endtask
+  endclass
+  class import_api_tb extends observe_impl #(import_api_base);
+  endclass
+  initial begin
+    import_api_tb imp = new();
+    export_api_if ep = pss_top::type_id().create(imp);
+    ep.Root();
+    $finish;
+  end
+endmodule
+"""
+
+
 @pytest.mark.skipif(not HAVE_VERILATOR, reason="verilator not available")
 def test_sv_native_stream_delivers_payload_before_consumer_body(tmp_path):
     """A stream binding delivers the producer value to its parallel consumer."""
@@ -394,3 +453,35 @@ def test_sv_native_stream_delivers_payload_before_consumer_body(tmp_path):
     )
     assert rc == 0, log
     assert "UH0_STREAM=165" in log
+
+
+@pytest.mark.skipif(not HAVE_VERILATOR, reason="verilator not available")
+def test_sv_native_buffer_delivers_identity_without_handle_resolve(tmp_path):
+    """A buffer input is assigned, not re-randomized as an opaque handle."""
+    out = _compile_native(tmp_path, _BUFFER_PSS, _BUFFER_TB)
+    generated = (out / "zsp_gen_pkg.sv").read_text()
+    assert "c.session = _flow_p_session;" in generated
+    assert "c.randomize() with { session == _flow_p_session; }" not in generated
+
+    rc, log = verilator_build_run(
+        out,
+        top_module="tb",
+        files=["zsp_rt_pkg.sv", "zsp_gen_pkg.sv", "tb.sv"],
+    )
+    assert rc == 0, log
+    assert "PSSC_BUFFER_VALUE=165" in log
+
+    bad_out = tmp_path / "bad_buffer_route"
+    _copy_generated_sources(out, bad_out)
+    generated = (bad_out / "zsp_gen_pkg.sv").read_text()
+    mutated = generated.replace("c.session = _flow_p_session;",
+                                "c.session = new();")
+    assert mutated != generated
+    (bad_out / "zsp_gen_pkg.sv").write_text(mutated)
+    rc, log = verilator_build_run(
+        bad_out,
+        top_module="tb",
+        files=["zsp_rt_pkg.sv", "zsp_gen_pkg.sv", "tb.sv"],
+    )
+    assert rc != 0, log
+    assert "PSSC_BUFFER_ROUTE=0" in log

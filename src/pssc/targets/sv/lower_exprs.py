@@ -180,7 +180,22 @@ def lower_expr(ctx: LoweringContext, expr: ir.Expr) -> str:
                 and isinstance(expr.func.value, ir.TypeExprRefSelf)):
             fname = expr.func.attr
         if fname and fname in ctx.import_function_names():
-            args = ", ".join(lower_expr(ctx, a) for a in expr.args)
+            # Solver-owned enum fields are lowered as packed bits for
+            # randomization, but import APIs retain their declared enum types.
+            # Cast at this ABI boundary so strict simulators receive the PSS
+            # formal type without changing the storage representation.
+            decl = ctx.import_function(fname)
+            formals = (decl.args.args if decl and getattr(decl, "args", None)
+                       else [])
+            args = []
+            for index, actual in enumerate(expr.args):
+                text = lower_expr(ctx, actual)
+                formal = formals[index] if index < len(formals) else None
+                dtype = getattr(formal, "annotation", None)
+                if isinstance(dtype, ir.DataTypeEnum):
+                    text = f"{ctx.pss_type_to_sv_type_str(dtype)}'({text})"
+                args.append(text)
+            args = ", ".join(args)
             return f"comp.import_if.{fname}({args})"
         func = lower_expr(ctx, expr.func)
         args = ", ".join(lower_expr(ctx, a) for a in expr.args)

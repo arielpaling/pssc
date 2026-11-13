@@ -73,6 +73,20 @@ class LoweringContext:
         funcs = getattr(ir_ctx, "import_functions", None) if ir_ctx else None
         return {f.name for f in funcs} if funcs else set()
 
+    def import_function(self, name: str):
+        """Return the declared package-scope import with ``name``, if any.
+
+        Call lowering needs the declared formal types as well as the name: an
+        enum argument stored in a randomizable policy object is represented as
+        packed solver bits, while the generated import API deliberately keeps
+        its enum-typed SystemVerilog contract.
+        """
+        ir_ctx = self.ir_ctx
+        for func in (getattr(ir_ctx, "import_functions", None) if ir_ctx else []):
+            if func.name == name:
+                return func
+        return None
+
     def warn(self, msg: str, location: str = "") -> None:
         """Record a generation-time warning and print it to stderr."""
         import sys

@@ -49,6 +49,32 @@ def _resolve_type(ctx, type_name):
     return dtype
 
 
+def _resolve_named_handle_type(ctx, handle: str, parent_dtype) -> str:
+    """Return the PSS action type declared by a named traversal handle.
+
+    A named traversal has no action type on the traversal node: the type is
+    owned by the compound action field.  Resource claims may be inherited by
+    that action, so resolving from the field is required before lowering the
+    acquire/release pair.
+    """
+    if parent_dtype is None or ctx.ir_ctx is None:
+        return ""
+    for field in getattr(parent_dtype, "fields", []):
+        if field.name != handle:
+            continue
+        ref = (getattr(field.datatype, "ref_name", None)
+               or getattr(field.datatype, "name", None))
+        if not ref:
+            return ""
+        if ref in ctx.ir_ctx.type_map:
+            return ref
+        for qname in ctx.ir_ctx.type_map:
+            if qname.endswith(f"::{ref}"):
+                return qname
+        return ref
+    return ""
+
+
 def _value_struct_with_target(ctx, trav: ir.ActivityTraversal,
                               with_parts: List[str]) -> Optional[tuple[str, List[str]]]:
     """Select a direct value-struct randomize target for a traversal ``with``.
@@ -117,6 +143,10 @@ class _FlowCtx:
     consumer: Dict[str, List['FlowBindingInfo']] = dc.field(default_factory=dict)
     # Mapping binding label -> SV local variable name for the flow object
     flow_var: Dict[str, str] = dc.field(default_factory=dict)
+    # The compound action that owns this activity.  Named traversals refer to
+    # action fields on this type, so it is the authoritative type source for
+    # inherited resource claims.
+    parent_dtype: object = None
 
     @classmethod
     def from_flow_info(cls, info: 'ActivityFlowInfo') -> '_FlowCtx':
@@ -323,7 +353,7 @@ def _lower_activity_impl(
         List of SV statement lines forming the activity task body.
     """
     # Run flow + activity analysis to discover bindings and pipeline chains
-    fctx: Optional[_FlowCtx] = None
+    fctx: Optional[_FlowCtx] = _FlowCtx(parent_dtype=parent_dtype)
     plan = None
     chain_steps: set = set()  # var_names handled by DPI chains
     if ctx.ir_ctx is not None:
@@ -332,6 +362,7 @@ def _lower_activity_impl(
             from .analyze_activity import analyze_activity as _analyze_activity
             info = analyze_flow(ctx, activity, parent_dtype=parent_dtype)
             fctx = _FlowCtx.from_flow_info(info)
+            fctx.parent_dtype = parent_dtype
             plan = _analyze_activity(ctx, activity)
             # Collect which action vars are covered by DPI chains
             for chain in plan.chains:
@@ -497,7 +528,6 @@ def _lower_traversal(
     lines = ["begin"]
 
     # --- Consumer: inject buffer inputs before pre_solve ---
-    has_flow_input = False
     if fctx is not None:
         for b in fctx.consumer.get(handle, []):
             if b.flow_kind in ("buffer", "stream", "state"):
@@ -506,30 +536,24 @@ def _lower_traversal(
                 if b.flow_kind == "stream":
                     lines.append(f"  {var_name}.get({handle}.{b.consumer_field});")
                 else:
-                    has_flow_input = True
                     lines.append(f"  {handle}.{b.consumer_field} = {var_name};")
-
-    if has_flow_input:
-        lines.append(f"  {handle}.constraint_mode(1);")
     lines.append(f"  {handle}.comp = {effective_comp_expr};")
     lines.append(f"  {handle}.pre_solve();")
 
-    # Build with-constraints: inline + buffer/stream consumer pinning.
-    # State objects are NOT constrained here — field injection above is sufficient.
+    # Build traversal-local constraints. Flow inputs were assigned above; they
+    # are values at execution time, not a second solver problem.
     with_parts: List[str] = []
-    if fctx is not None:
-        for b in fctx.consumer.get(handle, []):
-            if b.flow_kind == "buffer":
-                _fv = fctx.get_flow_var(b)
-                with_parts.append(f"{b.consumer_field} == {_fv}")
     if trav.inline_constraints:
         with_parts.extend(lower_expr(ctx, c) for c in trav.inline_constraints)
 
     # A parent action has already solved named child handles as part of its
     # compound solve domain. Re-randomizing an unconstrained traversal here
     # discards parent relationships (for example tx.data == rx.expected).
-    # Re-solve only when this traversal supplies its own constraints or flow
-    # bindings, which are necessarily execution-time values.
+    # Re-solve only when this traversal supplies its own inline constraints.
+    # An input buffer is already assigned to the consumer field above.  Asking
+    # the SV class solver to re-solve that opaque handle adds no PSS semantics
+    # and trips Verilator's class-handle randomize path. The producer's typed
+    # constraints and the direct assignment preserve the buffer contract.
     needs_resolve = bool(with_parts)
     if needs_resolve:
         value_target = _value_struct_with_target(ctx, trav, with_parts)
@@ -543,6 +567,12 @@ def _lower_traversal(
         else:
             lines.append(f"  if (!{handle}.randomize())")
         lines.append(f'    $fatal(1, "randomize failed: {handle}");')
+    action_type = _resolve_named_handle_type(
+        ctx, handle, fctx.parent_dtype if fctx is not None else None)
+    resource_claims = _get_resource_claims(ctx, handle, action_type)
+    for acq_line in emit_resource_acquire(resource_claims, handle):
+        lines.append(f"  {acq_line}")
+
     lines.append(f"  {handle}.post_solve();")
     lines.append(f"  {handle}.body();")
 
@@ -555,6 +585,9 @@ def _lower_traversal(
                     lines.append(f"  {var_name}.put({handle}.{b.producer_field});")
                 else:
                     lines.append(f"  {var_name} = {handle}.{b.producer_field};")
+
+    for rel_line in emit_resource_release(resource_claims, handle):
+        lines.append(f"  {rel_line}")
 
     lines.append("end")
     # Prepend trace macro (outside begin/end so it shows before the block)

@@ -74,3 +74,23 @@ def test_import_api_declares_user_enum_before_its_prototype(tmp_path):
     pkg = (out / "zsp_gen_pkg.sv").read_text()
     assert pkg.index("} source_e;") < pkg.index("interface class import_api_if")
     assert "pure virtual task service(input source_e source);" in pkg
+
+
+def test_import_enum_formal_casts_solver_owned_policy_field(tmp_path):
+    """The import ABI keeps enum typing when policy storage is packed bits."""
+    src = tmp_path / "m.pss"
+    src.write_text(
+        "enum source_e { TIMER = 0, UART = 1 }\n"
+        "struct policy_s { rand source_e selected; }\n"
+        "import target function void service(source_e source);\n"
+        "component pss_top {\n"
+        "  action Entry {\n"
+        "    policy_s policy;\n"
+        "    exec body { service(policy.selected); }\n"
+        "  }\n"
+        "}\n")
+    out = tmp_path / "out"
+    code = main(["compile", str(src), "-t", "sv-native", "-o", str(out), "-q"])
+    assert code == 0
+    pkg = (out / "zsp_gen_pkg.sv").read_text()
+    assert "comp.import_if.service(source_e'(policy.selected));" in pkg
